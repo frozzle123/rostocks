@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
 import discord
 from discord import app_commands
@@ -27,10 +28,10 @@ CONFIG = {
     'categories': os.getenv('CATEGORIES', 'STREAMING,DISCORD,GAMING,DIGITAL,ACCOUNTS,BOTS').split(','),
     
     # Ticket System Configuration
-    'ticket_category_id': int(os.getenv('TICKET_CATEGORY_ID', 0)),  # Set this in Railway
-    'support_role_id': int(os.getenv('SUPPORT_ROLE_ID', 0)),  # Set this in Railway
-    'admin_role_id': int(os.getenv('ADMIN_ROLE_ID', 0)),  # Set this in Railway
-    'ticket_log_channel_id': int(os.getenv('TICKET_LOG_CHANNEL_ID', 0)),  # Set this in Railway
+    'ticket_category_id': int(os.getenv('TICKET_CATEGORY_ID', 0)),
+    'support_role_id': int(os.getenv('SUPPORT_ROLE_ID', 0)),
+    'admin_role_id': int(os.getenv('ADMIN_ROLE_ID', 0)),
+    'ticket_log_channel_id': int(os.getenv('TICKET_LOG_CHANNEL_ID', 0)),
     
     # Colors
     'colors': {
@@ -42,10 +43,24 @@ CONFIG = {
     }
 }
 
-# Database setup
+# ============ DATABASE SETUP ============
 DB_PATH = os.getenv('DATABASE_PATH', 'shop.db')
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
+
+# Ensure the directory exists
+db_dir = os.path.dirname(DB_PATH)
+if db_dir:
+    Path(db_dir).mkdir(parents=True, exist_ok=True)
+
+# Connect to database
+try:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    cursor = conn.cursor()
+    print(f"✅ Database connected: {DB_PATH}")
+except sqlite3.OperationalError as e:
+    print(f"❌ Database error: {e}")
+    print(f"📁 DB_PATH: {DB_PATH}")
+    raise
 
 # Create all tables
 cursor.executescript('''
@@ -149,6 +164,7 @@ cursor.executescript('''
     );
 ''')
 conn.commit()
+print("✅ Database tables created/verified")
 
 # ============ DISCORD BOT SETUP ============
 intents = discord.Intents.default()
@@ -165,10 +181,13 @@ class ShopBot(commands.Bot):
         self.ticket_views = {}
 
     async def setup_hook(self):
-        if not self.synced:
-            await self.tree.sync(guild=discord.Object(id=int(GUILD_ID)))
-            self.synced = True
-            print(f"✅ Synced commands to guild {GUILD_ID}")
+        if not self.synced and GUILD_ID:
+            try:
+                await self.tree.sync(guild=discord.Object(id=int(GUILD_ID)))
+                self.synced = True
+                print(f"✅ Synced commands to guild {GUILD_ID}")
+            except Exception as e:
+                print(f"❌ Failed to sync commands: {e}")
 
 bot = ShopBot()
 
@@ -201,13 +220,13 @@ def create_embed(title, description, color='primary', fields=None, footer=None):
 async def deliver_order(order_id):
     cursor.execute('SELECT * FROM orders WHERE id = ?', (order_id,))
     order = cursor.fetchone()
-    if not order or order[6] == 'delivered':  # status index
+    if not order or order[6] == 'delivered':
         return False
 
     cursor.execute('SELECT * FROM products WHERE id = ?', (order[2],))
     product = cursor.fetchone()
 
-    if product and product[5] > 0:  # stock
+    if product and product[5] > 0:
         cursor.execute(
             'UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?',
             (order[4], product[0], order[4])
@@ -230,7 +249,6 @@ async def deliver_order(order_id):
     
     conn.commit()
     
-    # Try to DM user
     try:
         user = await bot.fetch_user(order[1])
         embed = create_embed(
@@ -304,20 +322,7 @@ async def create_ticket_modal(interaction: discord.Interaction):
     modal = PurchaseModal()
     await interaction.response.send_modal(modal)
 
-@bot.event
-async def on_submit(interaction: discord.Interaction):
-    if not isinstance(interaction, discord.Interaction):
-        return
-    
-    if interaction.data.get('custom_id') == 'create_ticket':
-        return
-    
-    if isinstance(interaction, discord.Interaction) and hasattr(interaction, 'modal'):
-        if isinstance(interaction.modal, PurchaseModal):
-            await handle_ticket_creation(interaction)
-
-async def handle_ticket_creation(interaction: discord.Interaction):
-    modal = interaction.modal
+async def handle_ticket_creation(interaction: discord.Interaction, modal: PurchaseModal):
     product = modal.product.value
     seller_input = modal.seller.value
     price = modal.price.value
@@ -327,7 +332,6 @@ async def handle_ticket_creation(interaction: discord.Interaction):
     seller = None
     seller_name = seller_input
     
-    # Try to find seller by mention or ID
     if seller_input.startswith('<@') and seller_input.endswith('>'):
         seller_id = seller_input.replace('<@', '').replace('>', '').replace('!', '')
         try:
@@ -336,42 +340,32 @@ async def handle_ticket_creation(interaction: discord.Interaction):
         except:
             pass
     else:
-        # Try to find by username
-        for guild in bot.guilds:
-            for member in guild.members:
-                if seller_input.lower() in member.display_name.lower() or seller_input.lower() in member.name.lower():
-                    seller = member
-                    seller_name = member.display_name
-                    break
-            if seller:
-                break
-    
-    if not seller:
-        # Try to get by ID if it's a number
         try:
             seller = await bot.fetch_user(int(seller_input))
             seller_name = seller.display_name
         except:
-            pass
+            for guild in bot.guilds:
+                for member in guild.members:
+                    if seller_input.lower() in member.display_name.lower() or seller_input.lower() in member.name.lower():
+                        seller = member
+                        seller_name = member.display_name
+                        break
+                if seller:
+                    break
     
     # Check if user is blacklisted
-    cursor.execute('SELECT blacklisted FROM users WHERE user_id = ?', (interaction.user.id,))
+    cursor.execute('SELECT blacklisted FROM users WHERE user_id = ?', (str(interaction.user.id),))
     blacklisted = cursor.fetchone()
     if blacklisted and blacklisted[0] == 1:
-        await interaction.response.send_message(
-            '❌ You are blacklisted from this shop.',
-            ephemeral=True
-        )
+        await interaction.response.send_message('❌ You are blacklisted from this shop.', ephemeral=True)
         return
     
     # Create ticket channel
     ticket_id = f"TICKET-{uuid.uuid4().hex[:8].upper()}"
     
-    # Get category
     category_id = CONFIG['ticket_category_id']
     category = interaction.guild.get_channel(category_id) if category_id else None
     
-    # Create channel
     try:
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -381,13 +375,11 @@ async def handle_ticket_creation(interaction: discord.Interaction):
         if seller:
             overwrites[seller] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
-        # Add support role if configured
         if CONFIG['support_role_id']:
             support_role = interaction.guild.get_role(CONFIG['support_role_id'])
             if support_role:
                 overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
-        # Add admin role if configured
         if CONFIG['admin_role_id']:
             admin_role = interaction.guild.get_role(CONFIG['admin_role_id'])
             if admin_role:
@@ -400,14 +392,12 @@ async def handle_ticket_creation(interaction: discord.Interaction):
             topic=f"Purchase ticket for {interaction.user.display_name} - {ticket_id}"
         )
         
-        # Save ticket to database
         cursor.execute('''
             INSERT INTO tickets (ticket_id, user_id, seller_id, channel_id, status)
             VALUES (?, ?, ?, ?, 'open')
         ''', (ticket_id, str(interaction.user.id), str(seller.id) if seller else None, str(channel.id)))
         conn.commit()
         
-        # Create order
         order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
         try:
             price_float = float(price.replace('$', '').replace(CONFIG['currency_symbol'], '').strip())
@@ -420,7 +410,6 @@ async def handle_ticket_creation(interaction: discord.Interaction):
         ''', (order_id, str(interaction.user.id), product, str(seller.id) if seller else None, seller_name, price_float, str(channel.id)))
         conn.commit()
         
-        # Create ticket embed
         embed = create_embed(
             f'🎫 New Purchase Ticket - {ticket_id}',
             f"**Ticket ID:** `{ticket_id}`\n"
@@ -435,9 +424,8 @@ async def handle_ticket_creation(interaction: discord.Interaction):
         )
         
         view = CloseTicketView(ticket_id)
-        ticket_message = await channel.send(embed=embed, view=view)
+        await channel.send(embed=embed, view=view)
         
-        # Ping seller and support
         mentions = []
         if seller:
             mentions.append(seller.mention)
@@ -449,7 +437,6 @@ async def handle_ticket_creation(interaction: discord.Interaction):
         if mentions:
             await channel.send(f"{' '.join(mentions)} - New purchase request!")
         
-        # Log to ticket log channel
         if CONFIG['ticket_log_channel_id']:
             log_channel = interaction.guild.get_channel(CONFIG['ticket_log_channel_id'])
             if log_channel:
@@ -485,7 +472,6 @@ async def handle_ticket_creation(interaction: discord.Interaction):
         print(f"Ticket creation error: {e}")
 
 async def close_ticket(interaction: discord.Interaction, ticket_id: str):
-    # Check permissions
     cursor.execute('SELECT * FROM tickets WHERE ticket_id = ?', (ticket_id,))
     ticket = cursor.fetchone()
     
@@ -493,16 +479,14 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
         await interaction.response.send_message('❌ Ticket not found.', ephemeral=True)
         return
     
-    # Check if user has permission to close
-    is_owner = str(interaction.user.id) == ticket[3]  # user_id
-    is_seller = str(interaction.user.id) == ticket[4] if ticket[4] else False  # seller_id
+    is_owner = str(interaction.user.id) == ticket[3]
+    is_seller = str(interaction.user.id) == ticket[4] if ticket[4] else False
     is_admin = interaction.user.guild_permissions.administrator
     
     if not (is_owner or is_seller or is_admin):
         await interaction.response.send_message('❌ You do not have permission to close this ticket.', ephemeral=True)
         return
     
-    # Update ticket status
     cursor.execute('''
         UPDATE tickets 
         SET status = 'closed', 
@@ -512,31 +496,20 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
     ''', (str(interaction.user.id), ticket_id))
     conn.commit()
     
-    # Get channel
-    channel = interaction.guild.get_channel(int(ticket[5]))  # channel_id
+    channel = interaction.guild.get_channel(int(ticket[5]))
     
-    # Send closure message
     embed = create_embed(
         '🔒 Ticket Closed',
-        f"This ticket has been closed by {interaction.user.mention}.\n"
-        f"**Ticket ID:** {ticket_id}",
+        f"This ticket has been closed by {interaction.user.mention}.\n**Ticket ID:** {ticket_id}",
         'error'
     )
     
     if channel:
         await channel.send(embed=embed)
-        # Update channel permissions
         await channel.set_permissions(interaction.guild.default_role, view_channel=False)
     
-    await interaction.response.send_message(
-        f'✅ Ticket {ticket_id} has been closed.',
-        ephemeral=True
-    )
-    
-    # Log closure
-    log_action('ticket_closed', str(interaction.user.id), str(interaction.user.id), {
-        'ticket_id': ticket_id
-    })
+    await interaction.response.send_message(f'✅ Ticket {ticket_id} has been closed.', ephemeral=True)
+    log_action('ticket_closed', str(interaction.user.id), str(interaction.user.id), {'ticket_id': ticket_id})
 
 async def send_transcript(interaction: discord.Interaction, ticket_id: str):
     cursor.execute('SELECT * FROM tickets WHERE ticket_id = ?', (ticket_id,))
@@ -546,7 +519,6 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
         await interaction.response.send_message('❌ Ticket not found.', ephemeral=True)
         return
     
-    # Get messages from channel
     channel = interaction.guild.get_channel(int(ticket[5]))
     if not channel:
         await interaction.response.send_message('❌ Channel not found.', ephemeral=True)
@@ -570,7 +542,6 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
     
     transcript_text = "\n".join(transcript)
     
-    # Send as file
     import io
     file = discord.File(io.StringIO(transcript_text), filename=f"transcript-{ticket_id}.txt")
     
@@ -614,11 +585,7 @@ async def addproduct(
         
         embed = create_embed(
             '✅ Product Added',
-            f"**{name}**\n"
-            f"Price: {CONFIG['currency_symbol']}{price}\n"
-            f"Stock: {stock}\n"
-            f"Category: {category}\n"
-            f"Seller: {seller or 'None'}",
+            f"**{name}**\nPrice: {CONFIG['currency_symbol']}{price}\nStock: {stock}\nCategory: {category}\nSeller: {seller or 'None'}",
             'success'
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -720,9 +687,7 @@ async def ticketpanel(interaction: discord.Interaction, channel: discord.TextCha
     
     embed = create_embed(
         '🛒 Purchase Tickets',
-        'Click the button below to create a purchase ticket.\n\n'
-        'A support staff will assist you with your purchase.\n'
-        'Please provide all required details in the form.',
+        'Click the button below to create a purchase ticket.\n\nA support staff will assist you with your purchase.\nPlease provide all required details in the form.',
         'primary',
         footer='All tickets are logged and tracked.'
     )
@@ -735,12 +700,7 @@ async def ticketpanel(interaction: discord.Interaction, channel: discord.TextCha
 
 @bot.tree.command(name='shop', description='Browse the shop')
 async def shop(interaction: discord.Interaction):
-    embed = create_embed(
-        '🛍️ Shop',
-        'Select a category below.',
-        'primary'
-    )
-    
+    embed = create_embed('🛍️ Shop', 'Select a category below.', 'primary')
     view = discord.ui.View()
     for cat in CONFIG['categories']:
         view.add_item(discord.ui.Button(
@@ -748,7 +708,6 @@ async def shop(interaction: discord.Interaction):
             style=discord.ButtonStyle.primary,
             custom_id=f'shop_category_{cat}'
         ))
-    
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name='balance', description='Check your balance')
@@ -772,7 +731,6 @@ async def balance(interaction: discord.Interaction):
 @bot.tree.command(name='buy', description='Start a purchase')
 @app_commands.describe(product='Product name')
 async def buy(interaction: discord.Interaction, product: str):
-    # Check if user is blacklisted
     cursor.execute('SELECT blacklisted FROM users WHERE user_id = ?', (interaction.user.id,))
     blacklisted = cursor.fetchone()
     if blacklisted and blacklisted[0] == 1:
@@ -785,7 +743,7 @@ async def buy(interaction: discord.Interaction, product: str):
     if not product_data:
         await interaction.response.send_message('❌ Product not found.', ephemeral=True)
         return
-    if product_data[4] < 1:  # stock
+    if product_data[4] < 1:
         await interaction.response.send_message('❌ Out of stock.', ephemeral=True)
         return
     
@@ -802,11 +760,7 @@ async def buy(interaction: discord.Interaction, product: str):
     
     embed = create_embed(
         '🛒 Order Created',
-        f"**Order ID:** `{order_id}`\n"
-        f"**Product:** {product_data[1]}\n"
-        f"**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n"
-        f"**Seller:** {product_data[8] or 'None'}\n\n"
-        f"Use `/pay {order_id}` to complete payment",
+        f"**Order ID:** `{order_id}`\n**Product:** {product_data[1]}\n**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n**Seller:** {product_data[8] or 'None'}\n\nUse `/pay {order_id}` to complete payment",
         'success'
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -846,13 +800,7 @@ async def pay(interaction: discord.Interaction, order: str):
     
     embed = create_embed(
         f'💳 Payment Instructions • {order_id}',
-        f"**Product:** {order_data[3]}\n"
-        f"**Amount:** {CONFIG['currency_symbol']}{order_data[5]}\n"
-        f"**Seller:** {order_data[4] or 'None'}\n\n"
-        f"**Accepted Methods:**\n"
-        f"• Account Balance\n"
-        f"• Crypto (ask seller)\n\n"
-        f"After payment use `/checkpayment {order_id}`",
+        f"**Product:** {order_data[3]}\n**Amount:** {CONFIG['currency_symbol']}{order_data[5]}\n**Seller:** {order_data[4] or 'None'}\n\n**Accepted Methods:**\n• Account Balance\n• Crypto (ask seller)\n\nAfter payment use `/checkpayment {order_id}`",
         'info'
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -954,16 +902,9 @@ async def stock(interaction: discord.Interaction):
 async def ticket(interaction: discord.Interaction):
     await create_ticket_modal(interaction)
 
-# ---------- SUPPORT COMMANDS ----------
-
 @bot.tree.command(name='support', description='Open a support ticket')
 async def support(interaction: discord.Interaction):
-    embed = create_embed(
-        '🎫 Support',
-        'Please click the button below to create a support ticket.\n'
-        'A staff member will assist you shortly.',
-        'info'
-    )
+    embed = create_embed('🎫 Support', 'Please click the button below to create a support ticket.\nA staff member will assist you shortly.', 'info')
     view = TicketView()
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -982,14 +923,11 @@ async def on_interaction(interaction: discord.Interaction):
     if interaction.type == discord.InteractionType.component:
         custom_id = interaction.data.get('custom_id', '')
         
-        # Handle create ticket button
         if custom_id == 'create_ticket':
             await create_ticket_modal(interaction)
             return
         
-        # Handle close ticket button
         if custom_id == 'close_ticket':
-            # Get ticket_id from channel name or database
             ticket_id = None
             cursor.execute('SELECT ticket_id FROM tickets WHERE channel_id = ?', (str(interaction.channel.id),))
             result = cursor.fetchone()
@@ -999,7 +937,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await close_ticket(interaction, ticket_id)
             return
         
-        # Handle transcript button
         if custom_id == 'transcript_ticket':
             ticket_id = None
             cursor.execute('SELECT ticket_id FROM tickets WHERE channel_id = ?', (str(interaction.channel.id),))
@@ -1010,7 +947,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_transcript(interaction, ticket_id)
             return
         
-        # Handle shop category buttons
         if custom_id.startswith('shop_category_'):
             category = custom_id.replace('shop_category_', '')
             cursor.execute(
@@ -1037,14 +973,9 @@ async def on_interaction(interaction: discord.Interaction):
             view = discord.ui.View()
             view.add_item(select)
             
-            embed = create_embed(
-                f'🛍️ {category}',
-                'Choose a product from the menu below.',
-                'primary'
-            )
+            embed = create_embed(f'🛍️ {category}', 'Choose a product from the menu below.', 'primary')
             await interaction.response.edit_message(embed=embed, view=view)
         
-        # Handle product selection
         elif custom_id == 'shop_select_product':
             selected = interaction.data.get('values', [''])[0]
             cursor.execute('SELECT * FROM products WHERE id = ?', (selected,))
@@ -1080,14 +1011,8 @@ async def on_interaction(interaction: discord.Interaction):
             
             await interaction.response.edit_message(embed=embed, view=view)
         
-        # Handle back button
         elif custom_id == 'shop_back':
-            embed = create_embed(
-                '🛍️ Shop',
-                'Select a category below.',
-                'primary'
-            )
-            
+            embed = create_embed('🛍️ Shop', 'Select a category below.', 'primary')
             view = discord.ui.View()
             for cat in CONFIG['categories']:
                 view.add_item(discord.ui.Button(
@@ -1095,10 +1020,8 @@ async def on_interaction(interaction: discord.Interaction):
                     style=discord.ButtonStyle.primary,
                     custom_id=f'shop_category_{cat}'
                 ))
-            
             await interaction.response.edit_message(embed=embed, view=view)
         
-        # Handle buy now button
         elif custom_id.startswith('buy_now_'):
             product_id = custom_id.replace('buy_now_', '')
             cursor.execute('SELECT * FROM products WHERE id = ? AND active = 1', (product_id,))
@@ -1108,7 +1031,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await interaction.response.send_message('❌ Out of stock.', ephemeral=True)
                 return
             
-            # Create order
             order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
             expires = (datetime.now() + timedelta(minutes=CONFIG['payment_timeout'])).isoformat()
             
@@ -1122,11 +1044,7 @@ async def on_interaction(interaction: discord.Interaction):
             
             embed = create_embed(
                 '🛒 Order Created',
-                f"**Order ID:** `{order_id}`\n"
-                f"**Product:** {product_data[1]}\n"
-                f"**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n"
-                f"**Seller:** {product_data[8] or 'None'}\n\n"
-                f"Click **Pay Now** or use `/pay {order_id}`",
+                f"**Order ID:** `{order_id}`\n**Product:** {product_data[1]}\n**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n**Seller:** {product_data[8] or 'None'}\n\nClick **Pay Now** or use `/pay {order_id}`",
                 'success'
             )
             
@@ -1144,7 +1062,6 @@ async def on_interaction(interaction: discord.Interaction):
             
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         
-        # Handle pay button
         elif custom_id.startswith('pay_btn_'):
             order_id = custom_id.replace('pay_btn_', '')
             cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, interaction.user.id))
@@ -1159,18 +1076,11 @@ async def on_interaction(interaction: discord.Interaction):
             
             embed = create_embed(
                 f'💳 Payment • {order_id}',
-                f"**Product:** {order_data[3]}\n"
-                f"**Amount due:** {CONFIG['currency_symbol']}{order_data[5]}\n"
-                f"**Seller:** {order_data[4] or 'None'}\n\n"
-                f"**Payment Methods:**\n"
-                f"• Account Balance\n"
-                f"• Crypto (ask seller)\n\n"
-                f"After payment use `/checkpayment {order_id}`",
+                f"**Product:** {order_data[3]}\n**Amount due:** {CONFIG['currency_symbol']}{order_data[5]}\n**Seller:** {order_data[4] or 'None'}\n\n**Payment Methods:**\n• Account Balance\n• Crypto (ask seller)\n\nAfter payment use `/checkpayment {order_id}`",
                 'info'
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
         
-        # Handle cancel order button
         elif custom_id.startswith('cancel_order_'):
             order_id = custom_id.replace('cancel_order_', '')
             cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, interaction.user.id))
@@ -1187,6 +1097,12 @@ async def on_interaction(interaction: discord.Interaction):
             conn.commit()
             await interaction.response.send_message(f'✅ Order `{order_id}` cancelled.', ephemeral=True)
 
+@bot.event
+async def on_submit(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.modal_submit:
+        if hasattr(interaction, 'modal') and isinstance(interaction.modal, PurchaseModal):
+            await handle_ticket_creation(interaction, interaction.modal)
+
 # ============ RUN BOT ============
 if __name__ == '__main__':
     if not TOKEN:
@@ -1196,4 +1112,7 @@ if __name__ == '__main__':
     
     print("🚀 Starting RoStock Discord Bot...")
     print(f"📊 Database: {DB_PATH}")
-    bot.run(TOKEN)
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        print(f"❌ Failed to start bot: {e}")
