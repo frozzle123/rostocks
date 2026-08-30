@@ -1,4 +1,4 @@
-# main.py - Complete Discord Shop Bot with Ticket System
+# main.py - Complete Discord Shop Bot with Ticket System + , Prefix
 import os
 import json
 import sqlite3
@@ -174,7 +174,7 @@ intents.guilds = True
 
 class ShopBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix='!', intents=intents)
+        super().__init__(command_prefix=',', intents=intents)
         self.db = conn
         self.config = CONFIG
         self.synced = False
@@ -551,9 +551,9 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
         ephemeral=True
     )
 
-# ============ COMMANDS ============
+# ============ SLASH COMMANDS ============
 
-# ---------- ADMIN COMMANDS ----------
+# ---------- ADMIN SLASH COMMANDS ----------
 
 @bot.tree.command(name='addproduct', description='Add a new product')
 @app_commands.default_permissions(administrator=True)
@@ -566,7 +566,7 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
     delivery='Delivery data (optional)',
     seller='Seller Discord ID (optional)'
 )
-async def addproduct(
+async def addproduct_slash(
     interaction: discord.Interaction, 
     name: str, 
     price: float, 
@@ -595,7 +595,7 @@ async def addproduct(
 @bot.tree.command(name='addstock', description='Add stock to a product')
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(name='Product name', amount='Amount to add')
-async def addstock(interaction: discord.Interaction, name: str, amount: int):
+async def addstock_slash(interaction: discord.Interaction, name: str, amount: int):
     cursor.execute('SELECT * FROM products WHERE name LIKE ?', (f'%{name}%',))
     product = cursor.fetchone()
     if not product:
@@ -612,7 +612,7 @@ async def addstock(interaction: discord.Interaction, name: str, amount: int):
 @bot.tree.command(name='blacklist', description='Blacklist a user')
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(user='User to blacklist', reason='Reason for blacklist')
-async def blacklist(interaction: discord.Interaction, user: discord.User, reason: str = 'No reason provided'):
+async def blacklist_slash(interaction: discord.Interaction, user: discord.User, reason: str = 'No reason provided'):
     ensure_user(user.id)
     cursor.execute('UPDATE users SET blacklisted = 1, blacklist_reason = ? WHERE user_id = ?', (reason, user.id))
     conn.commit()
@@ -625,7 +625,7 @@ async def blacklist(interaction: discord.Interaction, user: discord.User, reason
 @bot.tree.command(name='unblacklist', description='Remove user from blacklist')
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(user='User to unblacklist')
-async def unblacklist(interaction: discord.Interaction, user: discord.User):
+async def unblacklist_slash(interaction: discord.Interaction, user: discord.User):
     cursor.execute('UPDATE users SET blacklisted = 0, blacklist_reason = NULL WHERE user_id = ?', (user.id,))
     conn.commit()
     log_action('unblacklist_user', str(user.id), str(interaction.user.id))
@@ -636,7 +636,7 @@ async def unblacklist(interaction: discord.Interaction, user: discord.User):
 
 @bot.tree.command(name='stats', description='View shop statistics')
 @app_commands.default_permissions(administrator=True)
-async def stats(interaction: discord.Interaction):
+async def stats_slash(interaction: discord.Interaction):
     cursor.execute("SELECT COALESCE(SUM(price), 0) FROM orders WHERE status IN ('paid', 'delivered')")
     revenue = cursor.fetchone()[0]
     cursor.execute('SELECT COUNT(*) FROM orders')
@@ -671,7 +671,7 @@ async def stats(interaction: discord.Interaction):
 @bot.tree.command(name='deliver', description='Manually deliver an order')
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(order='Order ID')
-async def deliver(interaction: discord.Interaction, order: str):
+async def deliver_slash(interaction: discord.Interaction, order: str):
     order_id = order.upper()
     success = await deliver_order(order_id)
     await interaction.response.send_message(
@@ -682,7 +682,7 @@ async def deliver(interaction: discord.Interaction, order: str):
 @bot.tree.command(name='ticketpanel', description='Create ticket panel')
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(channel='Channel to send the ticket panel to')
-async def ticketpanel(interaction: discord.Interaction, channel: discord.TextChannel = None):
+async def ticketpanel_slash(interaction: discord.Interaction, channel: discord.TextChannel = None):
     channel = channel or interaction.channel
     
     embed = create_embed(
@@ -696,10 +696,10 @@ async def ticketpanel(interaction: discord.Interaction, channel: discord.TextCha
     await channel.send(embed=embed, view=view)
     await interaction.response.send_message(f'✅ Ticket panel sent to {channel.mention}', ephemeral=True)
 
-# ---------- USER COMMANDS ----------
+# ---------- USER SLASH COMMANDS ----------
 
 @bot.tree.command(name='shop', description='Browse the shop')
-async def shop(interaction: discord.Interaction):
+async def shop_slash(interaction: discord.Interaction):
     embed = create_embed('🛍️ Shop', 'Select a category below.', 'primary')
     view = discord.ui.View()
     for cat in CONFIG['categories']:
@@ -711,7 +711,7 @@ async def shop(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.tree.command(name='balance', description='Check your balance')
-async def balance(interaction: discord.Interaction):
+async def balance_slash(interaction: discord.Interaction):
     ensure_user(interaction.user.id)
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (interaction.user.id,))
     user = cursor.fetchone()
@@ -730,7 +730,7 @@ async def balance(interaction: discord.Interaction):
 
 @bot.tree.command(name='buy', description='Start a purchase')
 @app_commands.describe(product='Product name')
-async def buy(interaction: discord.Interaction, product: str):
+async def buy_slash(interaction: discord.Interaction, product: str):
     cursor.execute('SELECT blacklisted FROM users WHERE user_id = ?', (interaction.user.id,))
     blacklisted = cursor.fetchone()
     if blacklisted and blacklisted[0] == 1:
@@ -766,7 +766,7 @@ async def buy(interaction: discord.Interaction, product: str):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name='orders', description='View your orders')
-async def orders(interaction: discord.Interaction):
+async def orders_slash(interaction: discord.Interaction):
     cursor.execute(
         'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 15',
         (interaction.user.id,)
@@ -786,7 +786,7 @@ async def orders(interaction: discord.Interaction):
 
 @bot.tree.command(name='pay', description='Display payment instructions')
 @app_commands.describe(order='Order ID')
-async def pay(interaction: discord.Interaction, order: str):
+async def pay_slash(interaction: discord.Interaction, order: str):
     order_id = order.upper()
     cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, interaction.user.id))
     order_data = cursor.fetchone()
@@ -807,7 +807,7 @@ async def pay(interaction: discord.Interaction, order: str):
 
 @bot.tree.command(name='checkpayment', description='Check payment status')
 @app_commands.describe(order='Order ID')
-async def checkpayment(interaction: discord.Interaction, order: str):
+async def checkpayment_slash(interaction: discord.Interaction, order: str):
     order_id = order.upper()
     cursor.execute('SELECT * FROM orders WHERE id = ?', (order_id,))
     order_data = cursor.fetchone()
@@ -839,7 +839,7 @@ async def checkpayment(interaction: discord.Interaction, order: str):
 
 @bot.tree.command(name='cancel', description='Cancel current pending order')
 @app_commands.describe(order='Order ID')
-async def cancel(interaction: discord.Interaction, order: str):
+async def cancel_slash(interaction: discord.Interaction, order: str):
     order_id = order.upper()
     cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, interaction.user.id))
     order_data = cursor.fetchone()
@@ -857,7 +857,7 @@ async def cancel(interaction: discord.Interaction, order: str):
 
 @bot.tree.command(name='product', description='View product details')
 @app_commands.describe(name='Product name')
-async def product(interaction: discord.Interaction, name: str):
+async def product_slash(interaction: discord.Interaction, name: str):
     cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{name}%',))
     product_data = cursor.fetchone()
     
@@ -879,7 +879,7 @@ async def product(interaction: discord.Interaction, name: str):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name='stock', description='Show current stock')
-async def stock(interaction: discord.Interaction):
+async def stock_slash(interaction: discord.Interaction):
     cursor.execute('SELECT name, stock, price, category FROM products WHERE active = 1 ORDER BY category, name')
     products = cursor.fetchall()
     
@@ -899,14 +899,340 @@ async def stock(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name='ticket', description='Create a purchase ticket')
-async def ticket(interaction: discord.Interaction):
+async def ticket_slash(interaction: discord.Interaction):
     await create_ticket_modal(interaction)
 
 @bot.tree.command(name='support', description='Open a support ticket')
-async def support(interaction: discord.Interaction):
+async def support_slash(interaction: discord.Interaction):
     embed = create_embed('🎫 Support', 'Please click the button below to create a support ticket.\nA staff member will assist you shortly.', 'info')
     view = TicketView()
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+# ============ PREFIX COMMANDS (using ,) ============
+
+@bot.event
+async def on_message(message):
+    # Ignore bot messages
+    if message.author.bot:
+        return
+    
+    # Check if message starts with ,
+    if not message.content.startswith(','):
+        await bot.process_commands(message)
+        return
+    
+    # Remove prefix and split
+    args = message.content[1:].strip().split()
+    if not args:
+        return
+    
+    command = args[0].lower()
+    args = args[1:]
+    
+    # ----- Shop Commands -----
+    if command == 'shop':
+        embed = create_embed('🛍️ Shop', 'Select a category below.', 'primary')
+        view = discord.ui.View()
+        for cat in CONFIG['categories']:
+            view.add_item(discord.ui.Button(
+                label=cat,
+                style=discord.ButtonStyle.primary,
+                custom_id=f'shop_category_{cat}'
+            ))
+        await message.reply(embed=embed, view=view)
+    
+    elif command == 'balance' or command == 'bal':
+        ensure_user(message.author.id)
+        cursor.execute('SELECT * FROM users WHERE user_id = ?', (message.author.id,))
+        user = cursor.fetchone()
+        embed = create_embed(
+            '💰 Your Balance',
+            '',
+            'success',
+            [
+                {'name': 'Available', 'value': f'{CONFIG["currency_symbol"]}{user[1]:.2f}', 'inline': True},
+                {'name': 'Total Spent', 'value': f'{CONFIG["currency_symbol"]}{user[2]:.2f}', 'inline': True},
+                {'name': 'Orders', 'value': str(user[3]), 'inline': True},
+            ]
+        )
+        await message.reply(embed=embed)
+    
+    elif command == 'buy':
+        if not args:
+            await message.reply('❌ Please specify a product. Example: `,buy Netflix`')
+            return
+        product_name = ' '.join(args)
+        cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{product_name}%',))
+        product_data = cursor.fetchone()
+        if not product_data:
+            await message.reply('❌ Product not found.')
+            return
+        if product_data[4] < 1:
+            await message.reply('❌ Out of stock.')
+            return
+        order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
+        expires = (datetime.now() + timedelta(minutes=CONFIG['payment_timeout'])).isoformat()
+        cursor.execute('''
+            INSERT INTO orders (id, user_id, product_id, product_name, seller_id, seller_name, price, quantity, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ''', (order_id, message.author.id, product_data[0], product_data[1], product_data[7], product_data[8], product_data[2], expires))
+        conn.commit()
+        ensure_user(message.author.id)
+        embed = create_embed(
+            '🛒 Order Created',
+            f"**Order ID:** `{order_id}`\n**Product:** {product_data[1]}\n**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n\nUse `/pay {order_id}` to complete payment",
+            'success'
+        )
+        await message.reply(embed=embed)
+    
+    elif command == 'stock':
+        cursor.execute('SELECT name, stock, price, category FROM products WHERE active = 1 ORDER BY category, name')
+        products = cursor.fetchall()
+        if not products:
+            await message.reply('No products available.')
+            return
+        embed = create_embed('📦 Current Stock', '', 'info')
+        desc = ''
+        last_cat = ''
+        for p in products:
+            if p[3] != last_cat:
+                last_cat = p[3]
+                desc += f'\n**{last_cat}**\n'
+            desc += f"• **{p[0]}** — {CONFIG['currency_symbol']}{p[2]} | Stock: **{p[1]}**\n"
+        embed.description = desc[:4090]
+        await message.reply(embed=embed)
+    
+    elif command == 'orders':
+        cursor.execute(
+            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 15',
+            (message.author.id,)
+        )
+        orders_data = cursor.fetchall()
+        if not orders_data:
+            await message.reply('You have no orders.')
+            return
+        embed = create_embed('📜 Your Orders', '', 'primary')
+        desc = ''
+        for o in orders_data:
+            desc += f"**{o[0]}** — {o[3]}\n{CONFIG['currency_symbol']}{o[5]} | `{o[6]}`\n\n"
+        embed.description = desc
+        await message.reply(embed=embed)
+    
+    elif command == 'product':
+        if not args:
+            await message.reply('❌ Please specify a product. Example: `,product Netflix`')
+            return
+        product_name = ' '.join(args)
+        cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{product_name}%',))
+        product_data = cursor.fetchone()
+        if not product_data:
+            await message.reply('❌ Product not found.')
+            return
+        embed = create_embed(
+            product_data[1],
+            product_data[3] or '*No description*',
+            'primary',
+            [
+                {'name': '💰 Price', 'value': f'{CONFIG["currency_symbol"]}{product_data[2]}', 'inline': True},
+                {'name': '📦 Stock', 'value': str(product_data[4]), 'inline': True},
+                {'name': '📁 Category', 'value': product_data[5], 'inline': True},
+            ]
+        )
+        await message.reply(embed=embed)
+    
+    elif command == 'help':
+        embed = create_embed(
+            '📚 Commands',
+            '**Prefix: `,`**\n\n'
+            '`,shop` - Browse the shop\n'
+            '`,balance` or `,bal` - Check balance\n'
+            '`,buy <product>` - Purchase a product\n'
+            '`,stock` - View current stock\n'
+            '`,orders` - View your orders\n'
+            '`,product <name>` - View product details\n'
+            '`,ticket` - Create purchase ticket\n'
+            '`,support` - Open support ticket\n'
+            '`,cancel <order>` - Cancel order\n\n'
+            '**Slash commands also work!** Use `/`',
+            'primary'
+        )
+        await message.reply(embed=embed)
+    
+    elif command == 'ticket':
+        embed = create_embed(
+            '🎫 Create a Ticket',
+            'Please use `/ticket` to open the ticket form, or click the button below.',
+            'primary'
+        )
+        view = TicketView()
+        await message.reply(embed=embed, view=view)
+    
+    elif command == 'support':
+        embed = create_embed('🎫 Support', 'Please click the button below to create a support ticket.', 'info')
+        view = TicketView()
+        await message.reply(embed=embed, view=view)
+    
+    elif command == 'cancel':
+        if not args:
+            await message.reply('❌ Please specify an order ID. Example: `,cancel ORD-ABC123`')
+            return
+        order_id = args[0].upper()
+        cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, message.author.id))
+        order_data = cursor.fetchone()
+        if not order_data:
+            await message.reply('❌ Order not found.')
+            return
+        if order_data[6] != 'pending':
+            await message.reply(f'❌ Only pending orders can be cancelled. Current status: {order_data[6]}')
+            return
+        cursor.execute('UPDATE orders SET status = "cancelled" WHERE id = ?', (order_id,))
+        conn.commit()
+        await message.reply(f'✅ Order `{order_id}` cancelled.')
+    
+    # ----- Admin Prefix Commands -----
+    elif command == 'addproduct' and message.author.guild_permissions.administrator:
+        # Parse arguments: name:"Netflix" price:15 category:STREAMING stock:10
+        name = None
+        price = None
+        category = None
+        stock = None
+        description = ''
+        delivery = ''
+        seller = ''
+        
+        for arg in args:
+            if ':' in arg:
+                key, value = arg.split(':', 1)
+                if key == 'name':
+                    name = value.strip('"')
+                elif key == 'price':
+                    try:
+                        price = float(value)
+                    except ValueError:
+                        pass
+                elif key == 'category':
+                    category = value.upper()
+                elif key == 'stock':
+                    try:
+                        stock = int(value)
+                    except ValueError:
+                        pass
+                elif key == 'description':
+                    description = value.strip('"')
+                elif key == 'delivery':
+                    delivery = value.strip('"')
+                elif key == 'seller':
+                    seller = value.strip('"')
+        
+        if not all([name, price, category, stock]):
+            await message.reply('❌ Usage: `,addproduct name:"Product" price:15 category:STREAMING stock:10 [description:"..."] [delivery:"..."] [seller:"..."]`')
+            return
+        
+        try:
+            cursor.execute('''
+                INSERT INTO products (name, price, category, stock, description, delivery_data, seller_id, seller_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (name, price, category, stock, description, delivery, seller, ''))
+            conn.commit()
+            await message.reply(f'✅ **{name}** added | Price: {CONFIG["currency_symbol"]}{price} | Stock: {stock}')
+        except sqlite3.IntegrityError:
+            await message.reply('❌ Product name already exists.')
+    
+    elif command == 'addstock' and message.author.guild_permissions.administrator:
+        if len(args) < 2:
+            await message.reply('❌ Usage: `,addstock <product> <amount>`')
+            return
+        name = args[0]
+        try:
+            amount = int(args[1])
+        except ValueError:
+            await message.reply('❌ Amount must be a number.')
+            return
+        cursor.execute('SELECT * FROM products WHERE name LIKE ?', (f'%{name}%',))
+        product = cursor.fetchone()
+        if not product:
+            await message.reply('❌ Product not found.')
+            return
+        cursor.execute('UPDATE products SET stock = stock + ? WHERE id = ?', (amount, product[0]))
+        conn.commit()
+        await message.reply(f'✅ Added {amount} stock to **{product[1]}**. New stock: {product[4] + amount}')
+    
+    elif command == 'stats' and message.author.guild_permissions.administrator:
+        cursor.execute("SELECT COALESCE(SUM(price), 0) FROM orders WHERE status IN ('paid', 'delivered')")
+        revenue = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM orders')
+        total_orders = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM orders WHERE status = 'delivered'")
+        delivered = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM orders WHERE status = 'pending'")
+        pending = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM products WHERE active = 1')
+        products = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM users')
+        customers = cursor.fetchone()[0]
+        embed = create_embed(
+            '📊 Shop Statistics',
+            '',
+            'primary',
+            [
+                {'name': '💰 Total Revenue', 'value': f'{CONFIG["currency_symbol"]}{revenue:.2f}', 'inline': True},
+                {'name': '🛒 Total Orders', 'value': str(total_orders), 'inline': True},
+                {'name': '✅ Delivered', 'value': str(delivered), 'inline': True},
+                {'name': '⏳ Pending', 'value': str(pending), 'inline': True},
+                {'name': '📦 Products', 'value': str(products), 'inline': True},
+                {'name': '👥 Customers', 'value': str(customers), 'inline': True},
+            ]
+        )
+        await message.reply(embed=embed)
+    
+    elif command == 'blacklist' and message.author.guild_permissions.administrator:
+        if len(args) < 1:
+            await message.reply('❌ Usage: `,blacklist <user_id> [reason]`')
+            return
+        try:
+            user_id = int(args[0])
+            reason = ' '.join(args[1:]) if len(args) > 1 else 'No reason provided'
+            user = await bot.fetch_user(user_id)
+            ensure_user(user.id)
+            cursor.execute('UPDATE users SET blacklisted = 1, blacklist_reason = ? WHERE user_id = ?', (reason, user.id))
+            conn.commit()
+            await message.reply(f'✅ {user.mention} has been blacklisted.\nReason: {reason}')
+        except ValueError:
+            await message.reply('❌ Invalid user ID.')
+    
+    elif command == 'unblacklist' and message.author.guild_permissions.administrator:
+        if len(args) < 1:
+            await message.reply('❌ Usage: `,unblacklist <user_id>`')
+            return
+        try:
+            user_id = int(args[0])
+            user = await bot.fetch_user(user_id)
+            cursor.execute('UPDATE users SET blacklisted = 0, blacklist_reason = NULL WHERE user_id = ?', (user.id,))
+            conn.commit()
+            await message.reply(f'✅ {user.mention} has been unblacklisted.')
+        except ValueError:
+            await message.reply('❌ Invalid user ID.')
+    
+    elif command == 'deliver' and message.author.guild_permissions.administrator:
+        if len(args) < 1:
+            await message.reply('❌ Usage: `,deliver <order_id>`')
+            return
+        order_id = args[0].upper()
+        success = await deliver_order(order_id)
+        await message.reply(f'✅ Order `{order_id}` delivered.' if success else f'❌ Could not deliver `{order_id}`.')
+    
+    elif command == 'ticketpanel' and message.author.guild_permissions.administrator:
+        embed = create_embed(
+            '🛒 Purchase Tickets',
+            'Click the button below to create a purchase ticket.\n\nA support staff will assist you with your purchase.\nPlease provide all required details in the form.',
+            'primary',
+            footer='All tickets are logged and tracked.'
+        )
+        view = TicketView()
+        await message.reply(embed=embed, view=view)
+    
+    # Process other commands
+    await bot.process_commands(message)
 
 # ============ EVENT HANDLERS ============
 
@@ -916,7 +1242,7 @@ async def on_ready():
     print(f'📦 Bot is ready!')
     print(f'🏷️ Bot ID: {bot.user.id}')
     print(f'🔗 Invite: https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands')
-    await bot.change_presence(activity=discord.Game(name='🛒 /shop | 🎫 /ticket'))
+    await bot.change_presence(activity=discord.Game(name='🛒 ,help | ,shop'))
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
@@ -1112,6 +1438,8 @@ if __name__ == '__main__':
     
     print("🚀 Starting RoStock Discord Bot...")
     print(f"📊 Database: {DB_PATH}")
+    print("📝 Prefix: , (comma)")
+    print("🔗 Slash commands: / (also available)")
     try:
         bot.run(TOKEN)
     except Exception as e:
