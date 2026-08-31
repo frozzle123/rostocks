@@ -196,6 +196,9 @@ class ShopBot(commands.Bot):
 
 bot = ShopBot()
 
+# ============ REMOVE DEFAULT HELP COMMAND ============
+bot.remove_command('help')
+
 # ============ HELPER FUNCTIONS ============
 def ensure_user(user_id):
     cursor.execute('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (user_id,))
@@ -920,6 +923,7 @@ async def nitropanel_prefix(ctx, channel: discord.TextChannel = None):
     await create_panel(channel, 'nitro')
     await ctx.send(f'✅ Nitro panel created in {channel.mention}')
 
+# ============ FIXED: help command (now works!) ============
 @bot.command(name='help')
 async def help_prefix(ctx):
     """Show all commands with beautiful embed"""
@@ -962,6 +966,8 @@ async def help_prefix(ctx):
     )
     
     await ctx.send(embed=embed)
+
+# ============ All other commands ============
 
 @bot.command(name='say')
 async def say_prefix(ctx, *, message):
