@@ -22,36 +22,32 @@ OWNER_ID = os.getenv('OWNER_ID')
 
 # RoStock Brand Colors
 ROSTOCK_COLORS = {
-    'primary': 0x5865F2,      # Discord Blurple
-    'secondary': 0x57F287,    # Green
-    'accent': 0xED4245,       # Red
-    'gold': 0xFEE75C,         # Gold
-    'purple': 0xEB459E,       # Purple
-    'dark': 0x2B2D31,         # Dark
-    'embed': 0x2B2D31,        # Embed background
+    'primary': 0x5865F2,
+    'success': 0x57F287,
+    'error': 0xED4245,
+    'gold': 0xFEE75C,
+    'purple': 0xEB459E,
+    'dark': 0x2B2D31,
 }
 
-# Bot Configuration
+# RoStock Logo URL
+ROSTOCK_LOGO = "https://cdn.discordapp.com/icons/1543710514998411354/d2cc0139dfefec6629baf1df231343f9.webp?size=2048"
+
 CONFIG = {
     'currency_symbol': os.getenv('CURRENCY_SYMBOL', '💎'),
     'order_prefix': os.getenv('ORDER_PREFIX', 'RO-'),
     'payment_timeout': int(os.getenv('PAYMENT_TIMEOUT_MINUTES', 30)),
     'categories': os.getenv('CATEGORIES', 'STREAMING,DISCORD,GAMING,DIGITAL,ACCOUNTS,BOTS').split(','),
-    
-    # Ticket System Configuration
     'ticket_category_id': int(os.getenv('TICKET_CATEGORY_ID', 0)),
     'support_role_id': int(os.getenv('SUPPORT_ROLE_ID', 0)),
     'admin_role_id': int(os.getenv('ADMIN_ROLE_ID', 0)),
     'ticket_log_channel_id': int(os.getenv('TICKET_LOG_CHANNEL_ID', 0)),
-    
-    # Colors
     'colors': {
         'primary': ROSTOCK_COLORS['primary'],
-        'success': ROSTOCK_COLORS['secondary'],
-        'error': ROSTOCK_COLORS['accent'],
+        'success': ROSTOCK_COLORS['success'],
+        'error': ROSTOCK_COLORS['error'],
         'warning': ROSTOCK_COLORS['gold'],
         'info': ROSTOCK_COLORS['purple'],
-        'dark': ROSTOCK_COLORS['dark'],
     }
 }
 
@@ -210,7 +206,7 @@ def log_action(action_type, user_id, staff_id=None, data=None):
     )
     conn.commit()
 
-def create_embed(title, description, color='primary', fields=None, footer=None, thumbnail=None):
+def create_embed(title, description, color='primary', fields=None, footer=None):
     embed = discord.Embed(
         title=title,
         description=description,
@@ -219,13 +215,9 @@ def create_embed(title, description, color='primary', fields=None, footer=None, 
     if fields:
         for field in fields:
             embed.add_field(name=field['name'], value=field['value'], inline=field.get('inline', True))
-    if footer:
-        embed.set_footer(text=f"🛒 RoStock • {footer}")
-    else:
-        embed.set_footer(text="🛒 RoStock Shop")
+    embed.set_footer(text=f"🛒 RoStock • {footer}" if footer else "🛒 RoStock")
     embed.timestamp = datetime.now()
-    if thumbnail:
-        embed.set_thumbnail(url=thumbnail)
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
     return embed
 
 async def deliver_order(order_id):
@@ -332,11 +324,16 @@ class PurchaseModal(discord.ui.Modal, title='🎫 RoStock Purchase Request'):
     )
 
 async def create_ticket_modal(interaction: discord.Interaction):
+    """Create a ticket modal - FIXED: no response sent here"""
     modal = PurchaseModal()
     await interaction.response.send_modal(modal)
 
 async def handle_ticket_creation(interaction: discord.Interaction, modal: PurchaseModal):
+    """Handle the ticket creation after modal submission"""
     try:
+        # Defer the response to prevent timeout
+        await interaction.response.defer(ephemeral=True)
+        
         product = modal.product.value
         seller_input = modal.seller.value
         price = modal.price.value
@@ -371,7 +368,7 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         cursor.execute('SELECT blacklisted FROM users WHERE user_id = ?', (str(interaction.user.id),))
         blacklisted = cursor.fetchone()
         if blacklisted and blacklisted[0] == 1:
-            await interaction.response.send_message('❌ You are blacklisted from this shop.', ephemeral=True)
+            await interaction.followup.send('❌ You are blacklisted from this shop.', ephemeral=True)
             return
         
         # Create ticket channel
@@ -440,10 +437,10 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         embed.add_field(name="📝 Details", value=details[:1024] if len(details) > 1024 else details, inline=False)
         embed.set_footer(text=f"🛒 RoStock • Ticket created by {interaction.user.display_name}")
         embed.timestamp = datetime.now()
-        embed.set_thumbnail(url="https://cdn.discordapp.com/embed/avatars/0.png")
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         
         view = CloseTicketView(ticket_id)
-        ticket_message = await channel.send(embed=embed, view=view)
+        await channel.send(embed=embed, view=view)
         
         # Ping people
         mentions = []
@@ -455,9 +452,7 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
                 mentions.append(support_role.mention)
         
         if mentions:
-            welcome_msg = "📢 **New purchase request!**\n\n"
-            welcome_msg += "Please review the details above and assist the buyer.\n"
-            welcome_msg += "Use the buttons below to manage this ticket."
+            welcome_msg = "📢 **New purchase request!**\n\nPlease review the details above and assist the buyer.\nUse the buttons below to manage this ticket."
             await channel.send(f"{' '.join(mentions)}\n{welcome_msg}")
         
         # Log to ticket log channel
@@ -490,8 +485,9 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         )
         confirm_embed.set_footer(text="🛒 RoStock • Staff will assist you shortly")
         confirm_embed.timestamp = datetime.now()
+        confirm_embed.set_thumbnail(url=ROSTOCK_LOGO)
         
-        await interaction.response.send_message(embed=confirm_embed, ephemeral=True)
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
         
     except Exception as e:
         error_embed = discord.Embed(
@@ -500,7 +496,7 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             color=CONFIG['colors']['error']
         )
         error_embed.set_footer(text="🛒 RoStock • Please try again or contact support")
-        await interaction.response.send_message(embed=error_embed, ephemeral=True)
+        await interaction.followup.send(embed=error_embed, ephemeral=True)
         print(f"Ticket creation error: {e}")
 
 async def close_ticket(interaction: discord.Interaction, ticket_id: str):
@@ -537,6 +533,7 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
     )
     embed.set_footer(text="🛒 RoStock • Ticket closed")
     embed.timestamp = datetime.now()
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
     
     if channel:
         await channel.send(embed=embed)
@@ -594,6 +591,7 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
     )
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
     
     await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
 
@@ -727,7 +725,7 @@ async def ticketpanel_slash(interaction: discord.Interaction, channel: discord.T
                     "🔒 All transactions are tracked and logged",
         color=CONFIG['colors']['primary']
     )
-    embed.set_thumbnail(url="https://cdn.discordapp.com/embed/avatars/0.png")
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
     embed.set_footer(text="🛒 RoStock • Secure & Reliable")
     embed.timestamp = datetime.now()
     
@@ -945,6 +943,7 @@ async def support_slash(interaction: discord.Interaction):
                     "⏱️ Average response time: 2-5 minutes",
         color=CONFIG['colors']['info']
     )
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
     embed.set_footer(text="🛒 RoStock Support")
     embed.timestamp = datetime.now()
     view = TicketView()
@@ -963,6 +962,12 @@ async def on_message(message):
         await bot.process_commands(message)
         return
     
+    # Delete the user's original message (for ALL comma commands)
+    try:
+        await message.delete()
+    except:
+        pass
+    
     # Remove prefix and split
     args = message.content[1:].strip().split()
     if not args:
@@ -971,19 +976,11 @@ async def on_message(message):
     command = args[0].lower()
     args = args[1:]
     
-    # ----- SAY Command (with message deletion) -----
+    # ----- SAY Command -----
     if command == 'say':
         if not args:
-            await message.reply('❌ Please specify what to say. Example: `,say Hello!`')
+            await message.channel.send('❌ Please specify what to say. Example: `,say Hello!`')
             return
-        
-        # Delete the user's original message
-        try:
-            await message.delete()
-        except:
-            pass
-        
-        # Send the message as the bot
         say_content = ' '.join(args)
         await message.channel.send(say_content)
         return
@@ -995,6 +992,7 @@ async def on_message(message):
             description="Welcome to the RoStock shop!\nSelect a category below to browse products.",
             color=CONFIG['colors']['primary']
         )
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock Shop")
         embed.timestamp = datetime.now()
         view = discord.ui.View()
@@ -1004,7 +1002,7 @@ async def on_message(message):
                 style=discord.ButtonStyle.primary,
                 custom_id=f'shop_category_{cat}'
             ))
-        await message.reply(embed=embed, view=view)
+        await message.channel.send(embed=embed, view=view)
     
     elif command == 'balance' or command == 'bal':
         ensure_user(message.author.id)
@@ -1017,22 +1015,23 @@ async def on_message(message):
         embed.add_field(name="Available", value=f"{CONFIG['currency_symbol']}{user[1]:.2f}", inline=True)
         embed.add_field(name="Total Spent", value=f"{CONFIG['currency_symbol']}{user[2]:.2f}", inline=True)
         embed.add_field(name="Orders", value=str(user[3]), inline=True)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'buy':
         if not args:
-            await message.reply('❌ Please specify a product. Example: `,buy Netflix`')
+            await message.channel.send('❌ Please specify a product. Example: `,buy Netflix`')
             return
         product_name = ' '.join(args)
         cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{product_name}%',))
         product_data = cursor.fetchone()
         if not product_data:
-            await message.reply('❌ Product not found.')
+            await message.channel.send('❌ Product not found.')
             return
         if product_data[4] < 1:
-            await message.reply('❌ Out of stock.')
+            await message.channel.send('❌ Out of stock.')
             return
         order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
         expires = (datetime.now() + timedelta(minutes=CONFIG['payment_timeout'])).isoformat()
@@ -1047,15 +1046,16 @@ async def on_message(message):
             description=f"**Order ID:** `{order_id}`\n**Product:** {product_data[1]}\n**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n\nUse `/pay {order_id}` to complete payment",
             color=CONFIG['colors']['success']
         )
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'stock':
         cursor.execute('SELECT name, stock, price, category FROM products WHERE active = 1 ORDER BY category, name')
         products = cursor.fetchall()
         if not products:
-            await message.reply('No products available.')
+            await message.channel.send('No products available.')
             return
         embed = discord.Embed(
             title="📦 RoStock Inventory",
@@ -1069,9 +1069,10 @@ async def on_message(message):
                 desc += f'\n**{last_cat}**\n'
             desc += f"• **{p[0]}** — {CONFIG['currency_symbol']}{p[2]} | Stock: **{p[1]}**\n"
         embed.description = desc[:4090]
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'orders':
         cursor.execute(
@@ -1080,7 +1081,7 @@ async def on_message(message):
         )
         orders_data = cursor.fetchall()
         if not orders_data:
-            await message.reply('You have no orders.')
+            await message.channel.send('You have no orders.')
             return
         embed = discord.Embed(
             title="📜 Your Orders",
@@ -1090,19 +1091,20 @@ async def on_message(message):
         for o in orders_data:
             desc += f"**{o[0]}** — {o[3]}\n{CONFIG['currency_symbol']}{o[5]} | `{o[6]}`\n\n"
         embed.description = desc
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'product':
         if not args:
-            await message.reply('❌ Please specify a product. Example: `,product Netflix`')
+            await message.channel.send('❌ Please specify a product. Example: `,product Netflix`')
             return
         product_name = ' '.join(args)
         cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{product_name}%',))
         product_data = cursor.fetchone()
         if not product_data:
-            await message.reply('❌ Product not found.')
+            await message.channel.send('❌ Product not found.')
             return
         embed = discord.Embed(
             title=product_data[1],
@@ -1112,9 +1114,10 @@ async def on_message(message):
         embed.add_field(name="💰 Price", value=f"{CONFIG['currency_symbol']}{product_data[2]}", inline=True)
         embed.add_field(name="📦 Stock", value=str(product_data[4]), inline=True)
         embed.add_field(name="📁 Category", value=product_data[5], inline=True)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'help':
         embed = discord.Embed(
@@ -1136,9 +1139,10 @@ async def on_message(message):
                         "**Slash commands also work!** Use `/`",
             color=CONFIG['colors']['primary']
         )
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock • For more help, contact support")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'ticket':
         embed = discord.Embed(
@@ -1147,10 +1151,11 @@ async def on_message(message):
                         "Please fill out the form completely.",
             color=CONFIG['colors']['primary']
         )
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
         view = TicketView()
-        await message.reply(embed=embed, view=view)
+        await message.channel.send(embed=embed, view=view)
     
     elif command == 'support':
         embed = discord.Embed(
@@ -1158,27 +1163,28 @@ async def on_message(message):
             description="Click the button below to create a support ticket.",
             color=CONFIG['colors']['info']
         )
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock Support")
         embed.timestamp = datetime.now()
         view = TicketView()
-        await message.reply(embed=embed, view=view)
+        await message.channel.send(embed=embed, view=view)
     
     elif command == 'cancel':
         if not args:
-            await message.reply('❌ Please specify an order ID. Example: `,cancel RO-ABC123`')
+            await message.channel.send('❌ Please specify an order ID. Example: `,cancel RO-ABC123`')
             return
         order_id = args[0].upper()
         cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, message.author.id))
         order_data = cursor.fetchone()
         if not order_data:
-            await message.reply('❌ Order not found.')
+            await message.channel.send('❌ Order not found.')
             return
         if order_data[6] != 'pending':
-            await message.reply(f'❌ Only pending orders can be cancelled. Current status: {order_data[6]}')
+            await message.channel.send(f'❌ Only pending orders can be cancelled. Current status: {order_data[6]}')
             return
         cursor.execute('UPDATE orders SET status = "cancelled" WHERE id = ?', (order_id,))
         conn.commit()
-        await message.reply(f'✅ Order `{order_id}` cancelled.')
+        await message.channel.send(f'✅ Order `{order_id}` cancelled.')
     
     # ----- Admin Prefix Commands -----
     elif command == 'addproduct' and message.author.guild_permissions.administrator:
@@ -1215,7 +1221,7 @@ async def on_message(message):
                     seller = value.strip('"')
         
         if not all([name, price, category, stock]):
-            await message.reply('❌ Usage: `,addproduct name:"Product" price:15 category:STREAMING stock:10 [description:"..."] [delivery:"..."] [seller:"..."]`')
+            await message.channel.send('❌ Usage: `,addproduct name:"Product" price:15 category:STREAMING stock:10 [description:"..."] [delivery:"..."] [seller:"..."]`')
             return
         
         try:
@@ -1224,28 +1230,28 @@ async def on_message(message):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (name, price, category, stock, description, delivery, seller, ''))
             conn.commit()
-            await message.reply(f'✅ **{name}** added | Price: {CONFIG["currency_symbol"]}{price} | Stock: {stock}')
+            await message.channel.send(f'✅ **{name}** added | Price: {CONFIG["currency_symbol"]}{price} | Stock: {stock}')
         except sqlite3.IntegrityError:
-            await message.reply('❌ Product name already exists.')
+            await message.channel.send('❌ Product name already exists.')
     
     elif command == 'addstock' and message.author.guild_permissions.administrator:
         if len(args) < 2:
-            await message.reply('❌ Usage: `,addstock <product> <amount>`')
+            await message.channel.send('❌ Usage: `,addstock <product> <amount>`')
             return
         name = args[0]
         try:
             amount = int(args[1])
         except ValueError:
-            await message.reply('❌ Amount must be a number.')
+            await message.channel.send('❌ Amount must be a number.')
             return
         cursor.execute('SELECT * FROM products WHERE name LIKE ?', (f'%{name}%',))
         product = cursor.fetchone()
         if not product:
-            await message.reply('❌ Product not found.')
+            await message.channel.send('❌ Product not found.')
             return
         cursor.execute('UPDATE products SET stock = stock + ? WHERE id = ?', (amount, product[0]))
         conn.commit()
-        await message.reply(f'✅ Added {amount} stock to **{product[1]}**. New stock: {product[4] + amount}')
+        await message.channel.send(f'✅ Added {amount} stock to **{product[1]}**. New stock: {product[4] + amount}')
     
     elif command == 'stats' and message.author.guild_permissions.administrator:
         cursor.execute("SELECT COALESCE(SUM(price), 0) FROM orders WHERE status IN ('paid', 'delivered')")
@@ -1270,13 +1276,14 @@ async def on_message(message):
         embed.add_field(name="⏳ Pending", value=str(pending), inline=True)
         embed.add_field(name="📦 Products", value=str(products), inline=True)
         embed.add_field(name="👥 Customers", value=str(customers), inline=True)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock")
         embed.timestamp = datetime.now()
-        await message.reply(embed=embed)
+        await message.channel.send(embed=embed)
     
     elif command == 'blacklist' and message.author.guild_permissions.administrator:
         if len(args) < 1:
-            await message.reply('❌ Usage: `,blacklist <user_id> [reason]`')
+            await message.channel.send('❌ Usage: `,blacklist <user_id> [reason]`')
             return
         try:
             user_id = int(args[0])
@@ -1285,30 +1292,30 @@ async def on_message(message):
             ensure_user(user.id)
             cursor.execute('UPDATE users SET blacklisted = 1, blacklist_reason = ? WHERE user_id = ?', (reason, user.id))
             conn.commit()
-            await message.reply(f'✅ {user.mention} has been blacklisted.\nReason: {reason}')
+            await message.channel.send(f'✅ {user.mention} has been blacklisted.\nReason: {reason}')
         except ValueError:
-            await message.reply('❌ Invalid user ID.')
+            await message.channel.send('❌ Invalid user ID.')
     
     elif command == 'unblacklist' and message.author.guild_permissions.administrator:
         if len(args) < 1:
-            await message.reply('❌ Usage: `,unblacklist <user_id>`')
+            await message.channel.send('❌ Usage: `,unblacklist <user_id>`')
             return
         try:
             user_id = int(args[0])
             user = await bot.fetch_user(user_id)
             cursor.execute('UPDATE users SET blacklisted = 0, blacklist_reason = NULL WHERE user_id = ?', (user.id,))
             conn.commit()
-            await message.reply(f'✅ {user.mention} has been unblacklisted.')
+            await message.channel.send(f'✅ {user.mention} has been unblacklisted.')
         except ValueError:
-            await message.reply('❌ Invalid user ID.')
+            await message.channel.send('❌ Invalid user ID.')
     
     elif command == 'deliver' and message.author.guild_permissions.administrator:
         if len(args) < 1:
-            await message.reply('❌ Usage: `,deliver <order_id>`')
+            await message.channel.send('❌ Usage: `,deliver <order_id>`')
             return
         order_id = args[0].upper()
         success = await deliver_order(order_id)
-        await message.reply(f'✅ Order `{order_id}` delivered.' if success else f'❌ Could not deliver `{order_id}`.')
+        await message.channel.send(f'✅ Order `{order_id}` delivered.' if success else f'❌ Could not deliver `{order_id}`.')
     
     elif command == 'ticketpanel' and message.author.guild_permissions.administrator:
         embed = discord.Embed(
@@ -1318,11 +1325,11 @@ async def on_message(message):
                         "Our support team will assist you with your purchase.",
             color=CONFIG['colors']['primary']
         )
-        embed.set_thumbnail(url="https://cdn.discordapp.com/embed/avatars/0.png")
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
         embed.set_footer(text="🛒 RoStock • Secure & Reliable")
         embed.timestamp = datetime.now()
         view = TicketView()
-        await message.reply(embed=embed, view=view)
+        await message.channel.send(embed=embed, view=view)
     
     # Process other commands
     await bot.process_commands(message)
@@ -1397,6 +1404,7 @@ async def on_interaction(interaction: discord.Interaction):
                 description="Choose a product from the menu below.",
                 color=CONFIG['colors']['primary']
             )
+            embed.set_thumbnail(url=ROSTOCK_LOGO)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             await interaction.response.edit_message(embed=embed, view=view)
@@ -1419,6 +1427,7 @@ async def on_interaction(interaction: discord.Interaction):
             embed.add_field(name="📦 Stock", value=str(product_data[4]), inline=True)
             embed.add_field(name="📁 Category", value=product_data[5], inline=True)
             embed.add_field(name="👤 Seller", value=product_data[8] or 'None', inline=True)
+            embed.set_thumbnail(url=ROSTOCK_LOGO)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             
@@ -1442,6 +1451,7 @@ async def on_interaction(interaction: discord.Interaction):
                 description="Select a category below.",
                 color=CONFIG['colors']['primary']
             )
+            embed.set_thumbnail(url=ROSTOCK_LOGO)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             view = discord.ui.View()
@@ -1478,6 +1488,7 @@ async def on_interaction(interaction: discord.Interaction):
                 description=f"**Order ID:** `{order_id}`\n**Product:** {product_data[1]}\n**Price:** {CONFIG['currency_symbol']}{product_data[2]}\n**Seller:** {product_data[8] or 'None'}\n\nClick **Pay Now** or use `/pay {order_id}`",
                 color=CONFIG['colors']['success']
             )
+            embed.set_thumbnail(url=ROSTOCK_LOGO)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             
@@ -1512,6 +1523,7 @@ async def on_interaction(interaction: discord.Interaction):
                 description=f"**Product:** {order_data[3]}\n**Amount due:** {CONFIG['currency_symbol']}{order_data[5]}\n**Seller:** {order_data[4] or 'None'}\n\n**Payment Methods:**\n• Account Balance\n• Crypto (ask seller)\n\nAfter payment use `/checkpayment {order_id}`",
                 color=CONFIG['colors']['info']
             )
+            embed.set_thumbnail(url=ROSTOCK_LOGO)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -1549,6 +1561,7 @@ if __name__ == '__main__':
     print(f"📊 Database: {DB_PATH}")
     print("📝 Prefix: , (comma)")
     print("🔗 Slash commands: / (also available)")
+    print(f"🖼️ Logo: {ROSTOCK_LOGO}")
     try:
         bot.run(TOKEN)
     except Exception as e:
