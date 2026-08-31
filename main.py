@@ -30,8 +30,12 @@ ROSTOCK_COLORS = {
     'dark': 0x2B2D31,
 }
 
-# RoStock Logo URL
-ROSTOCK_LOGO = "https://cdn.discordapp.com/icons/1543710514998411354/d2cc0139dfefec6629baf1df231343f9.webp?size=2048"
+# ============ UPDATED ROSTOCK IMAGES ============
+# NEW Logo (Thumbnail)
+ROSTOCK_LOGO = "https://cdn.discordapp.com/icons/1532454881284063295/15bf1fd971ad4cea73c9acd47667bfc9.webp?size=2048"
+
+# NEW Banner Image (Large image for panels)
+ROSTOCK_BANNER = "https://cdn.discordapp.com/attachments/1544086303975669890/1544097548166238208/EAFC7DD0-FE41-4C18-8F8C-A07FE79CB16D.png?ex=6a974467&is=6a95f2e7&hm=699fd8734b4542e304d2c9780974de69803a16db48c68c825cf0794291192a78&"
 
 CONFIG = {
     'currency_symbol': os.getenv('CURRENCY_SYMBOL', '💎'),
@@ -211,7 +215,7 @@ def log_action(action_type, user_id, staff_id=None, data=None):
     )
     conn.commit()
 
-def create_embed(title, description, color='primary', fields=None, footer=None):
+def create_embed(title, description, color='primary', fields=None, footer=None, image_url=None):
     embed = discord.Embed(
         title=title,
         description=description,
@@ -223,6 +227,8 @@ def create_embed(title, description, color='primary', fields=None, footer=None):
     embed.set_footer(text=f"🛒 RoStock • {footer}" if footer else "🛒 RoStock")
     embed.timestamp = datetime.now()
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    if image_url:
+        embed.set_image(url=image_url)
     return embed
 
 async def deliver_order(order_id):
@@ -263,7 +269,8 @@ async def deliver_order(order_id):
             '✅ Order Delivered',
             f"**Order ID:** `{order[0]}`\n**Product:** {order[3]}\n\n**Delivery:**\n```\n{product[6] if product else 'Contact support'}\n```",
             'success',
-            footer="Thank you for shopping with RoStock!"
+            footer="Thank you for shopping with RoStock!",
+            image_url=ROSTOCK_BANNER
         )
         await user.send(embed=embed)
     except:
@@ -310,7 +317,6 @@ class PurchaseModal(discord.ui.Modal):
         super().__init__(title=f'🎫 {ticket_type.capitalize()} Purchase Request')
         self.ticket_type = ticket_type
         
-        # Get custom labels if they exist
         product_label = get_setting(f'{ticket_type}_product_label', '📦 What product/service do you want?')
         seller_label = get_setting(f'{ticket_type}_seller_label', '👤 Who is the seller?')
         price_label = get_setting(f'{ticket_type}_price_label', '💰 What is the price?')
@@ -396,14 +402,11 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         # Create ticket channel
         ticket_id = f"TICKET-{uuid.uuid4().hex[:8].upper()}"
         
-        # Get ticket category from settings
         category_id = int(get_setting('ticket_category_id', CONFIG['ticket_category_id']) or 0)
         category = interaction.guild.get_channel(category_id) if category_id else None
         
-        # Create channel name based on ticket type
         channel_name = f"{ticket_type.lower()}-{interaction.user.display_name[:20]}".replace(' ', '-').lower()
         
-        # Create channel overwrites
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
@@ -424,7 +427,6 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             if admin_role:
                 overwrites[admin_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
-        # Create the channel
         channel = await interaction.guild.create_text_channel(
             channel_name,
             category=category,
@@ -432,14 +434,12 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             topic=f"🎫 {ticket_type.capitalize()} Purchase Ticket - {ticket_id}"
         )
         
-        # Save to database
         cursor.execute('''
             INSERT INTO tickets (ticket_id, user_id, seller_id, channel_id, status, ticket_type)
             VALUES (?, ?, ?, ?, 'open', ?)
         ''', (ticket_id, str(interaction.user.id), str(seller.id) if seller else None, str(channel.id), ticket_type))
         conn.commit()
         
-        # Create order
         order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
         try:
             price_float = float(price.replace('$', '').replace(CONFIG['currency_symbol'], '').strip())
@@ -452,11 +452,9 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         ''', (order_id, str(interaction.user.id), product, str(seller.id) if seller else None, seller_name, price_float, str(channel.id)))
         conn.commit()
         
-        # Get embed title from settings
         embed_title = get_setting(f'{ticket_type}_embed_title', f'🎫 {ticket_type.capitalize()} Purchase Ticket')
         embed_color = int(get_setting(f'{ticket_type}_embed_color', CONFIG['colors']['primary']))
         
-        # Beautiful ticket embed
         embed = discord.Embed(
             title=embed_title,
             description=f"**Ticket ID:** `{ticket_id}`\n**Order ID:** `{order_id}`",
@@ -470,11 +468,11 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         embed.set_footer(text=f"🛒 RoStock • {ticket_type.capitalize()} Ticket")
         embed.timestamp = datetime.now()
         embed.set_thumbnail(url=ROSTOCK_LOGO)
+        embed.set_image(url=ROSTOCK_BANNER)
         
         view = CloseTicketView(ticket_id)
         await channel.send(embed=embed, view=view)
         
-        # Ping people
         mentions = []
         if seller:
             mentions.append(seller.mention)
@@ -487,7 +485,6 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             welcome_msg = f"📢 **New {ticket_type.capitalize()} purchase request!**\n\nPlease review the details above and assist the buyer.\nUse the buttons below to manage this ticket."
             await channel.send(f"{' '.join(mentions)}\n{welcome_msg}")
         
-        # Log to ticket log channel
         log_channel_id = int(get_setting('ticket_log_channel_id', CONFIG['ticket_log_channel_id']) or 0)
         if log_channel_id:
             log_channel = interaction.guild.get_channel(log_channel_id)
@@ -511,7 +508,6 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             'type': ticket_type
         })
         
-        # Send confirmation to user
         confirm_embed = discord.Embed(
             title="✅ Ticket Created Successfully!",
             description=f"Your {ticket_type} purchase ticket has been created.\n\n**Ticket:** {channel.mention}\n**ID:** `{ticket_id}`\n**Order:** `{order_id}`",
@@ -520,6 +516,7 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         confirm_embed.set_footer(text="🛒 RoStock • Staff will assist you shortly")
         confirm_embed.timestamp = datetime.now()
         confirm_embed.set_thumbnail(url=ROSTOCK_LOGO)
+        confirm_embed.set_image(url=ROSTOCK_BANNER)
         
         await interaction.followup.send(embed=confirm_embed, ephemeral=True)
         
@@ -569,6 +566,7 @@ async def close_ticket(interaction: discord.Interaction, ticket_id: str):
     embed.set_footer(text="🛒 RoStock • Ticket closed")
     embed.timestamp = datetime.now()
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     
     if channel:
         await channel.send(embed=embed)
@@ -628,6 +626,7 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     
     await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
 
@@ -637,7 +636,6 @@ async def create_panel(channel, panel_type, custom_data=None):
     """Create a ticket panel with custom settings"""
     panel_name = panel_type.capitalize()
     
-    # Get settings for this panel
     embed_title = custom_data.get('embed_title') if custom_data else get_setting(f'{panel_type}_embed_title', f'🎫 {panel_name} Purchase Center')
     embed_desc = custom_data.get('embed_description') if custom_data else get_setting(f'{panel_type}_embed_description', f'Welcome to the **RoStock** {panel_name} purchase center!\n\nClick the button below to create a {panel_name} purchase ticket.\nOur support team will assist you with your purchase.')
     button_label = custom_data.get('button_label') if custom_data else get_setting(f'{panel_type}_button_label', f'🛒 Purchase {panel_name}')
@@ -649,6 +647,7 @@ async def create_panel(channel, panel_type, custom_data=None):
         color=embed_color
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text=f"🛒 RoStock • {panel_name} Panel")
     embed.timestamp = datetime.now()
     
@@ -663,7 +662,7 @@ async def create_panel(channel, panel_type, custom_data=None):
     await channel.send(embed=embed, view=view)
 
 async def setup_wizard(ctx):
-    """Step-by-step setup wizard - FIXED for prefix commands"""
+    """Step-by-step setup wizard"""
     user_id = ctx.author.id
     bot.setup_data[user_id] = {}
     
@@ -676,11 +675,11 @@ async def setup_wizard(ctx):
         color=CONFIG['colors']['primary']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock • Type your response in chat")
     
     await ctx.send(embed=embed)
     
-    # Wait for user response
     def check(m):
         return m.author.id == user_id and m.channel.id == ctx.channel.id
     
@@ -703,6 +702,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed2.set_thumbnail(url=ROSTOCK_LOGO)
+        embed2.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed2)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -722,6 +722,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed3.set_thumbnail(url=ROSTOCK_LOGO)
+        embed3.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed3)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -741,6 +742,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed4.set_thumbnail(url=ROSTOCK_LOGO)
+        embed4.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed4)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -759,6 +761,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed5.set_thumbnail(url=ROSTOCK_LOGO)
+        embed5.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed5)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -772,6 +775,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed5b.set_thumbnail(url=ROSTOCK_LOGO)
+        embed5b.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed5b)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -785,6 +789,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed5c.set_thumbnail(url=ROSTOCK_LOGO)
+        embed5c.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed5c)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -805,6 +810,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed6.set_thumbnail(url=ROSTOCK_LOGO)
+        embed6.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed6)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -818,6 +824,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed6b.set_thumbnail(url=ROSTOCK_LOGO)
+        embed6b.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed6b)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -831,6 +838,7 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['primary']
         )
         embed6c.set_thumbnail(url=ROSTOCK_LOGO)
+        embed6c.set_image(url=ROSTOCK_BANNER)
         await ctx.send(embed=embed6c)
         
         msg = await bot.wait_for('message', timeout=120.0, check=check)
@@ -848,23 +856,19 @@ async def setup_wizard(ctx):
         save_setting('admin_role_id', str(bot.setup_data[user_id]['admin_role_id']))
         save_setting('ticket_log_channel_id', str(bot.setup_data[user_id]['ticket_log_channel_id']))
         
-        # Save Deco settings
         save_setting('deco_embed_title', bot.setup_data[user_id]['deco']['title'])
         save_setting('deco_embed_description', bot.setup_data[user_id]['deco']['description'])
         save_setting('deco_button_label', bot.setup_data[user_id]['deco']['button'])
         
-        # Save Nitro settings
         save_setting('nitro_embed_title', bot.setup_data[user_id]['nitro']['title'])
         save_setting('nitro_embed_description', bot.setup_data[user_id]['nitro']['description'])
         save_setting('nitro_button_label', bot.setup_data[user_id]['nitro']['button'])
         
-        # Update CONFIG
         CONFIG['ticket_category_id'] = bot.setup_data[user_id]['ticket_category_id']
         CONFIG['support_role_id'] = bot.setup_data[user_id]['support_role_id']
         CONFIG['admin_role_id'] = bot.setup_data[user_id]['admin_role_id']
         CONFIG['ticket_log_channel_id'] = bot.setup_data[user_id]['ticket_log_channel_id']
         
-        # Final confirmation
         final_embed = discord.Embed(
             title="✅ Setup Complete!",
             description="Your RoStock bot has been configured successfully!\n\n"
@@ -880,10 +884,10 @@ async def setup_wizard(ctx):
             color=CONFIG['colors']['success']
         )
         final_embed.set_thumbnail(url=ROSTOCK_LOGO)
+        final_embed.set_image(url=ROSTOCK_BANNER)
         final_embed.set_footer(text="🛒 RoStock • Ready to use!")
         await ctx.send(embed=final_embed)
         
-        # Clean up
         del bot.setup_data[user_id]
         
     except asyncio.TimeoutError:
@@ -923,7 +927,6 @@ async def nitropanel_prefix(ctx, channel: discord.TextChannel = None):
     await create_panel(channel, 'nitro')
     await ctx.send(f'✅ Nitro panel created in {channel.mention}')
 
-# ============ FIXED: help command (now works!) ============
 @bot.command(name='help')
 async def help_prefix(ctx):
     """Show all commands with beautiful embed"""
@@ -933,6 +936,7 @@ async def help_prefix(ctx):
         color=CONFIG['colors']['primary']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock • Use , before each command")
     embed.timestamp = datetime.now()
     
@@ -967,8 +971,6 @@ async def help_prefix(ctx):
     
     await ctx.send(embed=embed)
 
-# ============ All other commands ============
-
 @bot.command(name='say')
 async def say_prefix(ctx, *, message):
     """Make the bot say something"""
@@ -983,6 +985,7 @@ async def shop_prefix(ctx):
         color=CONFIG['colors']['primary']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     view = discord.ui.View()
@@ -1008,6 +1011,7 @@ async def balance_prefix(ctx):
     embed.add_field(name="Total Spent", value=f"{CONFIG['currency_symbol']}{user[2]:.2f}", inline=True)
     embed.add_field(name="Orders", value=str(user[3]), inline=True)
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     await ctx.send(embed=embed)
@@ -1037,6 +1041,7 @@ async def buy_prefix(ctx, *, product_name):
         color=CONFIG['colors']['success']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     await ctx.send(embed=embed)
@@ -1062,6 +1067,7 @@ async def stock_prefix(ctx):
         desc += f"• **{p[0]}** — {CONFIG['currency_symbol']}{p[2]} | Stock: **{p[1]}**\n"
     embed.description = desc[:4090]
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     await ctx.send(embed=embed)
@@ -1086,6 +1092,7 @@ async def orders_prefix(ctx):
         desc += f"**{o[0]}** — {o[3]}\n{CONFIG['currency_symbol']}{o[5]} | `{o[6]}`\n\n"
     embed.description = desc
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     await ctx.send(embed=embed)
@@ -1107,6 +1114,7 @@ async def product_prefix(ctx, *, product_name):
     embed.add_field(name="📦 Stock", value=str(product_data[4]), inline=True)
     embed.add_field(name="📁 Category", value=product_data[5], inline=True)
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     await ctx.send(embed=embed)
@@ -1121,6 +1129,7 @@ async def ticket_prefix(ctx):
         color=CONFIG['colors']['primary']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock")
     embed.timestamp = datetime.now()
     view = TicketView()
@@ -1135,6 +1144,7 @@ async def support_prefix(ctx):
         color=CONFIG['colors']['info']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     embed.set_footer(text="🛒 RoStock Support")
     embed.timestamp = datetime.now()
     view = TicketView(ticket_type='support')
@@ -1163,7 +1173,6 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    # Delete user's message for all commands
     if message.content.startswith(','):
         try:
             await message.delete()
@@ -1179,14 +1188,12 @@ async def on_interaction(interaction: discord.Interaction):
     if interaction.type == discord.InteractionType.component:
         custom_id = interaction.data.get('custom_id', '')
         
-        # Handle create ticket buttons
         if custom_id.startswith('create_') and custom_id.endswith('_ticket'):
             ticket_type = custom_id.replace('create_', '').replace('_ticket', '')
             modal = PurchaseModal(ticket_type=ticket_type)
             await interaction.response.send_modal(modal)
             return
         
-        # Handle close ticket
         if custom_id == 'close_ticket':
             ticket_id = None
             cursor.execute('SELECT ticket_id FROM tickets WHERE channel_id = ?', (str(interaction.channel.id),))
@@ -1197,7 +1204,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await close_ticket(interaction, ticket_id)
             return
         
-        # Handle transcript
         if custom_id == 'transcript_ticket':
             ticket_id = None
             cursor.execute('SELECT ticket_id FROM tickets WHERE channel_id = ?', (str(interaction.channel.id),))
@@ -1208,7 +1214,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_transcript(interaction, ticket_id)
             return
         
-        # Handle shop category buttons
         if custom_id.startswith('shop_category_'):
             category = custom_id.replace('shop_category_', '')
             cursor.execute(
@@ -1241,12 +1246,12 @@ async def on_interaction(interaction: discord.Interaction):
                 color=CONFIG['colors']['primary']
             )
             embed.set_thumbnail(url=ROSTOCK_LOGO)
+            embed.set_image(url=ROSTOCK_BANNER)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             await interaction.response.edit_message(embed=embed, view=view)
             return
         
-        # Handle product selection
         if custom_id == 'shop_select_product':
             selected = interaction.data.get('values', [''])[0]
             cursor.execute('SELECT * FROM products WHERE id = ?', (selected,))
@@ -1266,6 +1271,7 @@ async def on_interaction(interaction: discord.Interaction):
             embed.add_field(name="📁 Category", value=product_data[5], inline=True)
             embed.add_field(name="👤 Seller", value=product_data[8] or 'None', inline=True)
             embed.set_thumbnail(url=ROSTOCK_LOGO)
+            embed.set_image(url=ROSTOCK_BANNER)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             
@@ -1284,7 +1290,6 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.edit_message(embed=embed, view=view)
             return
         
-        # Handle back button
         if custom_id == 'shop_back':
             embed = discord.Embed(
                 title="🛍️ RoStock Shop",
@@ -1292,6 +1297,7 @@ async def on_interaction(interaction: discord.Interaction):
                 color=CONFIG['colors']['primary']
             )
             embed.set_thumbnail(url=ROSTOCK_LOGO)
+            embed.set_image(url=ROSTOCK_BANNER)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             view = discord.ui.View()
@@ -1304,7 +1310,6 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.edit_message(embed=embed, view=view)
             return
         
-        # Handle buy now button
         if custom_id.startswith('buy_now_'):
             product_id = custom_id.replace('buy_now_', '')
             cursor.execute('SELECT * FROM products WHERE id = ? AND active = 1', (product_id,))
@@ -1331,6 +1336,7 @@ async def on_interaction(interaction: discord.Interaction):
                 color=CONFIG['colors']['success']
             )
             embed.set_thumbnail(url=ROSTOCK_LOGO)
+            embed.set_image(url=ROSTOCK_BANNER)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             
@@ -1349,7 +1355,6 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             return
         
-        # Handle pay button
         if custom_id.startswith('pay_btn_'):
             order_id = custom_id.replace('pay_btn_', '')
             cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, interaction.user.id))
@@ -1368,12 +1373,12 @@ async def on_interaction(interaction: discord.Interaction):
                 color=CONFIG['colors']['info']
             )
             embed.set_thumbnail(url=ROSTOCK_LOGO)
+            embed.set_image(url=ROSTOCK_BANNER)
             embed.set_footer(text="🛒 RoStock")
             embed.timestamp = datetime.now()
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Handle cancel order button
         if custom_id.startswith('cancel_order_'):
             order_id = custom_id.replace('cancel_order_', '')
             cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, interaction.user.id))
@@ -1409,6 +1414,7 @@ if __name__ == '__main__':
     print("📝 Prefix: , (comma)")
     print("🔗 Slash commands: / (also available)")
     print(f"🖼️ Logo: {ROSTOCK_LOGO}")
+    print(f"🖼️ Banner: {ROSTOCK_BANNER}")
     try:
         bot.run(TOKEN)
     except Exception as e:
