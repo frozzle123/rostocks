@@ -1,4 +1,4 @@
-# main.py - RoStock Discord Shop Bot
+# main.py - RoStock Discord Shop Bot with Auto-Setup
 import os
 import json
 import sqlite3
@@ -30,11 +30,8 @@ ROSTOCK_COLORS = {
     'dark': 0x2B2D31,
 }
 
-# ============ UPDATED ROSTOCK IMAGES ============
-# NEW Logo (Thumbnail)
+# RoStock Images
 ROSTOCK_LOGO = "https://cdn.discordapp.com/icons/1532454881284063295/15bf1fd971ad4cea73c9acd47667bfc9.webp?size=2048"
-
-# NEW Banner Image (Large image for panels)
 ROSTOCK_BANNER = "https://cdn.discordapp.com/attachments/1544086303975669890/1544097548166238208/EAFC7DD0-FE41-4C18-8F8C-A07FE79CB16D.png?ex=6a974467&is=6a95f2e7&hm=699fd8734b4542e304d2c9780974de69803a16db48c68c825cf0794291192a78&"
 
 CONFIG = {
@@ -42,10 +39,10 @@ CONFIG = {
     'order_prefix': os.getenv('ORDER_PREFIX', 'RO-'),
     'payment_timeout': int(os.getenv('PAYMENT_TIMEOUT_MINUTES', 30)),
     'categories': os.getenv('CATEGORIES', 'STREAMING,DISCORD,GAMING,DIGITAL,ACCOUNTS,BOTS').split(','),
-    'ticket_category_id': int(os.getenv('TICKET_CATEGORY_ID', 0)),
-    'support_role_id': int(os.getenv('SUPPORT_ROLE_ID', 0)),
-    'admin_role_id': int(os.getenv('ADMIN_ROLE_ID', 0)),
-    'ticket_log_channel_id': int(os.getenv('TICKET_LOG_CHANNEL_ID', 0)),
+    'ticket_category_id': 0,  # Will be set during setup
+    'support_role_id': 0,
+    'admin_role_id': 0,
+    'ticket_log_channel_id': 0,
     'colors': {
         'primary': ROSTOCK_COLORS['primary'],
         'success': ROSTOCK_COLORS['success'],
@@ -402,11 +399,25 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         # Create ticket channel
         ticket_id = f"TICKET-{uuid.uuid4().hex[:8].upper()}"
         
-        category_id = int(get_setting('ticket_category_id', CONFIG['ticket_category_id']) or 0)
+        # Get category from settings
+        category_id = int(get_setting('ticket_category_id', 0) or 0)
         category = interaction.guild.get_channel(category_id) if category_id else None
         
+        # If no category found, try to find "TICKETS" category or use current channel's category
+        if not category:
+            for cat in interaction.guild.categories:
+                if cat.name.upper() == 'TICKETS':
+                    category = cat
+                    break
+        
+        # If still no category, use the current channel's category
+        if not category and interaction.channel.category:
+            category = interaction.channel.category
+        
+        # Create channel name
         channel_name = f"{ticket_type.lower()}-{interaction.user.display_name[:20]}".replace(' ', '-').lower()
         
+        # Create channel overwrites
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
@@ -415,18 +426,19 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         if seller:
             overwrites[seller] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
-        support_role_id = int(get_setting('support_role_id', CONFIG['support_role_id']) or 0)
+        support_role_id = int(get_setting('support_role_id', 0) or 0)
         if support_role_id:
             support_role = interaction.guild.get_role(support_role_id)
             if support_role:
                 overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
-        admin_role_id = int(get_setting('admin_role_id', CONFIG['admin_role_id']) or 0)
+        admin_role_id = int(get_setting('admin_role_id', 0) or 0)
         if admin_role_id:
             admin_role = interaction.guild.get_role(admin_role_id)
             if admin_role:
                 overwrites[admin_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
+        # Create the channel
         channel = await interaction.guild.create_text_channel(
             channel_name,
             category=category,
@@ -434,12 +446,14 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             topic=f"🎫 {ticket_type.capitalize()} Purchase Ticket - {ticket_id}"
         )
         
+        # Save to database
         cursor.execute('''
             INSERT INTO tickets (ticket_id, user_id, seller_id, channel_id, status, ticket_type)
             VALUES (?, ?, ?, ?, 'open', ?)
         ''', (ticket_id, str(interaction.user.id), str(seller.id) if seller else None, str(channel.id), ticket_type))
         conn.commit()
         
+        # Create order
         order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
         try:
             price_float = float(price.replace('$', '').replace(CONFIG['currency_symbol'], '').strip())
@@ -485,29 +499,6 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             welcome_msg = f"📢 **New {ticket_type.capitalize()} purchase request!**\n\nPlease review the details above and assist the buyer.\nUse the buttons below to manage this ticket."
             await channel.send(f"{' '.join(mentions)}\n{welcome_msg}")
         
-        log_channel_id = int(get_setting('ticket_log_channel_id', CONFIG['ticket_log_channel_id']) or 0)
-        if log_channel_id:
-            log_channel = interaction.guild.get_channel(log_channel_id)
-            if log_channel:
-                log_embed = discord.Embed(
-                    title=f"🎫 New {ticket_type.capitalize()} Ticket",
-                    description=f"**Ticket:** {ticket_id}\n**Channel:** {channel.mention}\n**Buyer:** {interaction.user.mention}\n**Seller:** {seller.mention if seller else 'Unknown'}",
-                    color=CONFIG['colors']['success']
-                )
-                log_embed.add_field(name="Product", value=product, inline=True)
-                log_embed.add_field(name="Price", value=f"{CONFIG['currency_symbol']}{price_float}", inline=True)
-                log_embed.timestamp = datetime.now()
-                log_embed.set_footer(text=f"🛒 RoStock {ticket_type.capitalize()} Log")
-                await log_channel.send(embed=log_embed)
-        
-        log_action('ticket_created', str(interaction.user.id), str(seller.id) if seller else None, {
-            'ticket_id': ticket_id,
-            'order_id': order_id,
-            'product': product,
-            'price': price_float,
-            'type': ticket_type
-        })
-        
         confirm_embed = discord.Embed(
             title="✅ Ticket Created Successfully!",
             description=f"Your {ticket_type} purchase ticket has been created.\n\n**Ticket:** {channel.mention}\n**ID:** `{ticket_id}`\n**Order:** `{order_id}`",
@@ -521,15 +512,15 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         await interaction.followup.send(embed=confirm_embed, ephemeral=True)
         
     except Exception as e:
+        print(f"Ticket creation error: {e}")
         error_embed = discord.Embed(
             title="❌ Failed to Create Ticket",
-            description=f"An error occurred while creating your ticket.\n\n**Error:** {str(e)}",
+            description=f"An error occurred while creating your ticket.\n\n**Error:** {str(e)}\n\nPlease contact an administrator.",
             color=CONFIG['colors']['error']
         )
         error_embed.set_footer(text="🛒 RoStock • Please try again or contact support")
         error_embed.set_thumbnail(url=ROSTOCK_LOGO)
         await interaction.followup.send(embed=error_embed, ephemeral=True)
-        print(f"Ticket creation error: {e}")
 
 async def close_ticket(interaction: discord.Interaction, ticket_id: str):
     cursor.execute('SELECT * FROM tickets WHERE ticket_id = ?', (ticket_id,))
@@ -661,245 +652,241 @@ async def create_panel(channel, panel_type, custom_data=None):
     
     await channel.send(embed=embed, view=view)
 
+# ============ AUTO SETUP WIZARD ============
+
 async def setup_wizard(ctx):
-    """Step-by-step setup wizard"""
+    """Step-by-step setup wizard - AUTO CREATES CATEGORY"""
     user_id = ctx.author.id
-    bot.setup_data[user_id] = {}
+    guild = ctx.guild
     
+    # Step 1: Create Tickets Category
     embed = discord.Embed(
         title="⚙️ RoStock Setup Wizard",
-        description="Welcome to the RoStock setup wizard! Let's configure your bot step by step.\n\n"
-                    "**Step 1 of 6: Ticket Category**\n"
-                    "Please enter the category ID where tickets should be created.\n\n"
-                    "To get a category ID: Right-click a category → Copy ID",
+        description="**Step 1 of 5: Creating Ticket Category**\n\n"
+                    "I'll create a **TICKETS** category for all ticket channels.\n"
+                    "This will keep your server organized!",
         color=CONFIG['colors']['primary']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
     embed.set_image(url=ROSTOCK_BANNER)
-    embed.set_footer(text="🛒 RoStock • Type your response in chat")
+    await ctx.send(embed=embed)
     
+    # Create the category
+    try:
+        category = await guild.create_category("TICKETS")
+        save_setting('ticket_category_id', str(category.id))
+        CONFIG['ticket_category_id'] = category.id
+        
+        embed = discord.Embed(
+            title="✅ Category Created!",
+            description=f"Created category: **{category.name}**\nID: `{category.id}`",
+            color=CONFIG['colors']['success']
+        )
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Failed to create category: {e}")
+        return
+    
+    # Step 2: Support Role
+    embed = discord.Embed(
+        title="⚙️ RoStock Setup Wizard",
+        description="**Step 2 of 5: Support Role**\n\n"
+                    "Please mention the role that should be pinged for new tickets.\n"
+                    "Example: `@Support` or type `none` to skip.",
+        color=CONFIG['colors']['primary']
+    )
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
     await ctx.send(embed=embed)
     
     def check(m):
         return m.author.id == user_id and m.channel.id == ctx.channel.id
     
     try:
-        # Step 1: Category ID
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
-        try:
-            bot.setup_data[user_id]['ticket_category_id'] = int(msg.content)
-        except ValueError:
-            await ctx.send("❌ Invalid category ID. Please enter a number.")
-            return
-        
-        # Step 2: Support Role ID
-        embed2 = discord.Embed(
-            title="⚙️ RoStock Setup Wizard",
-            description="**Step 2 of 6: Support Role**\n"
-                        "Please enter the role ID for support staff.\n"
-                        "This role will be pinged when tickets are created.\n\n"
-                        "To get a role ID: Server Settings → Roles → Right-click → Copy ID",
-            color=CONFIG['colors']['primary']
-        )
-        embed2.set_thumbnail(url=ROSTOCK_LOGO)
-        embed2.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed2)
-        
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
-        try:
-            bot.setup_data[user_id]['support_role_id'] = int(msg.content)
-        except ValueError:
-            await ctx.send("❌ Invalid role ID. Please enter a number.")
-            return
-        
-        # Step 3: Admin Role ID
-        embed3 = discord.Embed(
-            title="⚙️ RoStock Setup Wizard",
-            description="**Step 3 of 6: Admin Role**\n"
-                        "Please enter the role ID for admins.\n"
-                        "This role will have full access to tickets.\n\n"
-                        "To get a role ID: Server Settings → Roles → Right-click → Copy ID",
-            color=CONFIG['colors']['primary']
-        )
-        embed3.set_thumbnail(url=ROSTOCK_LOGO)
-        embed3.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed3)
-        
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
-        try:
-            bot.setup_data[user_id]['admin_role_id'] = int(msg.content)
-        except ValueError:
-            await ctx.send("❌ Invalid role ID. Please enter a number.")
-            return
-        
-        # Step 4: Log Channel ID
-        embed4 = discord.Embed(
-            title="⚙️ RoStock Setup Wizard",
-            description="**Step 4 of 6: Log Channel**\n"
-                        "Please enter the channel ID for ticket logs.\n"
-                        "All ticket activity will be logged here.\n\n"
-                        "To get a channel ID: Right-click a channel → Copy ID",
-            color=CONFIG['colors']['primary']
-        )
-        embed4.set_thumbnail(url=ROSTOCK_LOGO)
-        embed4.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed4)
-        
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
-        try:
-            bot.setup_data[user_id]['ticket_log_channel_id'] = int(msg.content)
-        except ValueError:
-            await ctx.send("❌ Invalid channel ID. Please enter a number.")
-            return
-        
-        # Step 5: Panel Text
-        embed5 = discord.Embed(
-            title="⚙️ RoStock Setup Wizard",
-            description="**Step 5 of 6: Deco Panel Configuration**\n\n"
-                        "Please enter the **panel title** for the Deco panel.\n"
-                        "(e.g., '🎨 Deco Purchase Center')",
-            color=CONFIG['colors']['primary']
-        )
-        embed5.set_thumbnail(url=ROSTOCK_LOGO)
-        embed5.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed5)
-        
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
+        if msg.content.lower() != 'none':
+            # Try to find the role
+            role_name = msg.content.replace('@', '').strip()
+            role = discord.utils.get(guild.roles, name=role_name)
+            if not role:
+                # Try to find by mention
+                for r in guild.roles:
+                    if r.mention in msg.content:
+                        role = r
+                        break
+            
+            if role:
+                save_setting('support_role_id', str(role.id))
+                CONFIG['support_role_id'] = role.id
+                await ctx.send(f"✅ Support role set to: {role.mention}")
+            else:
+                await ctx.send("❌ Role not found. Please run setup again to set it.")
+    except asyncio.TimeoutError:
+        await ctx.send("⏰ Timeout! Skipping support role.")
+    
+    # Step 3: Admin Role
+    embed = discord.Embed(
+        title="⚙️ RoStock Setup Wizard",
+        description="**Step 3 of 5: Admin Role**\n\n"
+                    "Please mention the role for admins.\n"
+                    "Example: `@Admin` or type `none` to skip.",
+        color=CONFIG['colors']['primary']
+    )
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
+    await ctx.send(embed=embed)
+    
+    try:
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
+        if msg.content.lower() != 'none':
+            role_name = msg.content.replace('@', '').strip()
+            role = discord.utils.get(guild.roles, name=role_name)
+            if not role:
+                for r in guild.roles:
+                    if r.mention in msg.content:
+                        role = r
+                        break
+            
+            if role:
+                save_setting('admin_role_id', str(role.id))
+                CONFIG['admin_role_id'] = role.id
+                await ctx.send(f"✅ Admin role set to: {role.mention}")
+            else:
+                await ctx.send("❌ Role not found. Please run setup again to set it.")
+    except asyncio.TimeoutError:
+        await ctx.send("⏰ Timeout! Skipping admin role.")
+    
+    # Step 4: Deco Panel Text
+    embed = discord.Embed(
+        title="⚙️ RoStock Setup Wizard",
+        description="**Step 4 of 5: Deco Panel Configuration**\n\n"
+                    "Please enter the **panel title** for the Deco panel.\n"
+                    "(e.g., '🎨 Deco Purchase Center')",
+        color=CONFIG['colors']['primary']
+    )
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
+    await ctx.send(embed=embed)
+    
+    try:
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
         deco_title = msg.content
         
-        embed5b = discord.Embed(
+        embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 5 of 6: Deco Panel Configuration (continued)**\n\n"
+            description="**Step 4 of 5: Deco Panel Configuration (continued)**\n\n"
                         "Please enter the **panel description** for the Deco panel.\n"
                         "(e.g., 'Click below to purchase custom deco services')",
             color=CONFIG['colors']['primary']
         )
-        embed5b.set_thumbnail(url=ROSTOCK_LOGO)
-        embed5b.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed5b)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
+        embed.set_image(url=ROSTOCK_BANNER)
+        await ctx.send(embed=embed)
         
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
         deco_desc = msg.content
         
-        embed5c = discord.Embed(
+        embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 5 of 6: Deco Panel Configuration (continued)**\n\n"
+            description="**Step 4 of 5: Deco Panel Configuration (continued)**\n\n"
                         "Please enter the **button text** for the Deco panel.\n"
                         "(e.g., '🛒 Purchase Deco')",
             color=CONFIG['colors']['primary']
         )
-        embed5c.set_thumbnail(url=ROSTOCK_LOGO)
-        embed5c.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed5c)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
+        embed.set_image(url=ROSTOCK_BANNER)
+        await ctx.send(embed=embed)
         
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
         deco_button = msg.content
         
-        bot.setup_data[user_id]['deco'] = {
-            'title': deco_title,
-            'description': deco_desc,
-            'button': deco_button
-        }
+        save_setting('deco_embed_title', deco_title)
+        save_setting('deco_embed_description', deco_desc)
+        save_setting('deco_button_label', deco_button)
         
-        # Step 6: Nitro Panel Text
-        embed6 = discord.Embed(
-            title="⚙️ RoStock Setup Wizard",
-            description="**Step 6 of 6: Nitro Panel Configuration**\n\n"
-                        "Please enter the **panel title** for the Nitro panel.\n"
-                        "(e.g., '💎 Nitro Purchase Center')",
-            color=CONFIG['colors']['primary']
-        )
-        embed6.set_thumbnail(url=ROSTOCK_LOGO)
-        embed6.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed6)
-        
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
+        await ctx.send("✅ Deco panel configured!")
+    except asyncio.TimeoutError:
+        await ctx.send("⏰ Timeout! Using default Deco settings.")
+    
+    # Step 5: Nitro Panel Text
+    embed = discord.Embed(
+        title="⚙️ RoStock Setup Wizard",
+        description="**Step 5 of 5: Nitro Panel Configuration**\n\n"
+                    "Please enter the **panel title** for the Nitro panel.\n"
+                    "(e.g., '💎 Nitro Purchase Center')",
+        color=CONFIG['colors']['primary']
+    )
+    embed.set_thumbnail(url=ROSTOCK_LOGO)
+    embed.set_image(url=ROSTOCK_BANNER)
+    await ctx.send(embed=embed)
+    
+    try:
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
         nitro_title = msg.content
         
-        embed6b = discord.Embed(
+        embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 6 of 6: Nitro Panel Configuration (continued)**\n\n"
+            description="**Step 5 of 5: Nitro Panel Configuration (continued)**\n\n"
                         "Please enter the **panel description** for the Nitro panel.\n"
                         "(e.g., 'Click below to purchase Discord Nitro')",
             color=CONFIG['colors']['primary']
         )
-        embed6b.set_thumbnail(url=ROSTOCK_LOGO)
-        embed6b.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed6b)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
+        embed.set_image(url=ROSTOCK_BANNER)
+        await ctx.send(embed=embed)
         
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
         nitro_desc = msg.content
         
-        embed6c = discord.Embed(
+        embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 6 of 6: Nitro Panel Configuration (continued)**\n\n"
+            description="**Step 5 of 5: Nitro Panel Configuration (continued)**\n\n"
                         "Please enter the **button text** for the Nitro panel.\n"
                         "(e.g., '🛒 Purchase Nitro')",
             color=CONFIG['colors']['primary']
         )
-        embed6c.set_thumbnail(url=ROSTOCK_LOGO)
-        embed6c.set_image(url=ROSTOCK_BANNER)
-        await ctx.send(embed=embed6c)
+        embed.set_thumbnail(url=ROSTOCK_LOGO)
+        embed.set_image(url=ROSTOCK_BANNER)
+        await ctx.send(embed=embed)
         
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
         nitro_button = msg.content
         
-        bot.setup_data[user_id]['nitro'] = {
-            'title': nitro_title,
-            'description': nitro_desc,
-            'button': nitro_button
-        }
+        save_setting('nitro_embed_title', nitro_title)
+        save_setting('nitro_embed_description', nitro_desc)
+        save_setting('nitro_button_label', nitro_button)
         
-        # Save all settings
-        save_setting('ticket_category_id', str(bot.setup_data[user_id]['ticket_category_id']))
-        save_setting('support_role_id', str(bot.setup_data[user_id]['support_role_id']))
-        save_setting('admin_role_id', str(bot.setup_data[user_id]['admin_role_id']))
-        save_setting('ticket_log_channel_id', str(bot.setup_data[user_id]['ticket_log_channel_id']))
-        
-        save_setting('deco_embed_title', bot.setup_data[user_id]['deco']['title'])
-        save_setting('deco_embed_description', bot.setup_data[user_id]['deco']['description'])
-        save_setting('deco_button_label', bot.setup_data[user_id]['deco']['button'])
-        
-        save_setting('nitro_embed_title', bot.setup_data[user_id]['nitro']['title'])
-        save_setting('nitro_embed_description', bot.setup_data[user_id]['nitro']['description'])
-        save_setting('nitro_button_label', bot.setup_data[user_id]['nitro']['button'])
-        
-        CONFIG['ticket_category_id'] = bot.setup_data[user_id]['ticket_category_id']
-        CONFIG['support_role_id'] = bot.setup_data[user_id]['support_role_id']
-        CONFIG['admin_role_id'] = bot.setup_data[user_id]['admin_role_id']
-        CONFIG['ticket_log_channel_id'] = bot.setup_data[user_id]['ticket_log_channel_id']
-        
-        final_embed = discord.Embed(
-            title="✅ Setup Complete!",
-            description="Your RoStock bot has been configured successfully!\n\n"
-                        "**Settings Saved:**\n"
-                        f"• Ticket Category: <#{bot.setup_data[user_id]['ticket_category_id']}>\n"
-                        f"• Support Role: <@&{bot.setup_data[user_id]['support_role_id']}>\n"
-                        f"• Admin Role: <@&{bot.setup_data[user_id]['admin_role_id']}>\n"
-                        f"• Log Channel: <#{bot.setup_data[user_id]['ticket_log_channel_id']}>\n\n"
-                        "**Use these commands to create panels:**\n"
-                        "• `,decopanel` - Create Deco purchase panel\n"
-                        "• `,nitropanel` - Create Nitro purchase panel\n\n"
-                        "To customize panel text, use the setup command again.",
-            color=CONFIG['colors']['success']
-        )
-        final_embed.set_thumbnail(url=ROSTOCK_LOGO)
-        final_embed.set_image(url=ROSTOCK_BANNER)
-        final_embed.set_footer(text="🛒 RoStock • Ready to use!")
-        await ctx.send(embed=final_embed)
-        
-        del bot.setup_data[user_id]
-        
+        await ctx.send("✅ Nitro panel configured!")
     except asyncio.TimeoutError:
-        await ctx.send("❌ Setup timed out. Please run `,setup` again.")
-        if user_id in bot.setup_data:
-            del bot.setup_data[user_id]
+        await ctx.send("⏰ Timeout! Using default Nitro settings.")
+    
+    # Final confirmation
+    final_embed = discord.Embed(
+        title="✅ Setup Complete!",
+        description="Your RoStock bot has been configured successfully!\n\n"
+                    "**What was set up:**\n"
+                    f"• ✅ Created **TICKETS** category\n"
+                    f"• ✅ Support role: {f'<@&{get_setting("support_role_id", 0)}>' if get_setting("support_role_id", 0) else 'None'}\n"
+                    f"• ✅ Admin role: {f'<@&{get_setting("admin_role_id", 0)}>' if get_setting("admin_role_id", 0) else 'None'}\n"
+                    f"• ✅ Deco panel configured\n"
+                    f"• ✅ Nitro panel configured\n\n"
+                    "**Use these commands to create panels:**\n"
+                    "• `,decopanel` - Create Deco purchase panel\n"
+                    "• `,nitropanel` - Create Nitro purchase panel\n\n"
+                    "**Tickets will now be created in the TICKETS category!**",
+        color=CONFIG['colors']['success']
+    )
+    final_embed.set_thumbnail(url=ROSTOCK_LOGO)
+    final_embed.set_image(url=ROSTOCK_BANNER)
+    final_embed.set_footer(text="🛒 RoStock • Ready to use!")
+    await ctx.send(embed=final_embed)
 
 # ============ PREFIX COMMANDS ============
 
 @bot.command(name='setup')
 async def setup_prefix(ctx):
-    """Start the setup wizard - Step by step configuration"""
+    """Start the setup wizard - AUTO CREATES CATEGORY"""
     if not ctx.author.guild_permissions.administrator:
         await ctx.send('❌ You need administrator permissions to run this command.')
         return
