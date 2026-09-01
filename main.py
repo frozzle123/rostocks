@@ -65,12 +65,19 @@ CONFIG = {
 }
 
 # ============ DATABASE SETUP ============
-DB_PATH = 'shop.db'
+# Use /app/shop.db for Railway, or local shop.db for development
+DB_PATH = os.getenv('DATABASE_PATH', '/app/shop.db')
 
+# Ensure the directory exists
 db_dir = os.path.dirname(DB_PATH)
-if db_dir:
-    Path(db_dir).mkdir(parents=True, exist_ok=True)
+if db_dir and not os.path.exists(db_dir):
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+        print(f"✅ Created directory: {db_dir}")
+    except Exception as e:
+        print(f"❌ Could not create directory: {e}")
 
+# Connect to database
 try:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -78,7 +85,17 @@ try:
     print(f"✅ Database connected: {DB_PATH}")
 except sqlite3.OperationalError as e:
     print(f"❌ Database error: {e}")
-    raise
+    print(f"📁 Trying to create database at: {DB_PATH}")
+    # Try with a different path as fallback
+    try:
+        DB_PATH = 'shop.db'
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        cursor = conn.cursor()
+        print(f"✅ Database connected (fallback): {DB_PATH}")
+    except Exception as e2:
+        print(f"❌ Failed to connect to database: {e2}")
+        raise
 
 cursor.executescript('''
     CREATE TABLE IF NOT EXISTS products (
