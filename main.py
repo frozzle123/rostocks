@@ -1,4 +1,4 @@
-# main.py - RoStock Discord Shop Bot with Auto-Setup
+# main.py - RoStock Discord Shop Bot
 import os
 import json
 import sqlite3
@@ -14,13 +14,26 @@ from discord.ext import commands
 # Load environment variables
 load_dotenv()
 
-# ============ CONFIGURATION ============
+# ============ REQUIRED ENV VARIABLES ============
 TOKEN = os.getenv('BOT_TOKEN')
 CLIENT_ID = os.getenv('CLIENT_ID')
 GUILD_ID = os.getenv('GUILD_ID')
-OWNER_ID = os.getenv('OWNER_ID')
 
-# RoStock Brand Colors
+# Optional env variables with defaults
+CURRENCY_SYMBOL = os.getenv('CURRENCY_SYMBOL', '💎')
+
+# Check required variables
+if not TOKEN:
+    print("❌ Error: BOT_TOKEN is required in .env file!")
+    exit(1)
+if not CLIENT_ID:
+    print("❌ Error: CLIENT_ID is required in .env file!")
+    exit(1)
+if not GUILD_ID:
+    print("❌ Error: GUILD_ID is required in .env file!")
+    exit(1)
+
+# ============ CONFIGURATION ============
 ROSTOCK_COLORS = {
     'primary': 0x5865F2,
     'success': 0x57F287,
@@ -30,16 +43,15 @@ ROSTOCK_COLORS = {
     'dark': 0x2B2D31,
 }
 
-# RoStock Images
 ROSTOCK_LOGO = "https://cdn.discordapp.com/icons/1532454881284063295/15bf1fd971ad4cea73c9acd47667bfc9.webp?size=2048"
 ROSTOCK_BANNER = "https://cdn.discordapp.com/attachments/1544086303975669890/1544097548166238208/EAFC7DD0-FE41-4C18-8F8C-A07FE79CB16D.png?ex=6a974467&is=6a95f2e7&hm=699fd8734b4542e304d2c9780974de69803a16db48c68c825cf0794291192a78&"
 
 CONFIG = {
-    'currency_symbol': os.getenv('CURRENCY_SYMBOL', '💎'),
-    'order_prefix': os.getenv('ORDER_PREFIX', 'RO-'),
-    'payment_timeout': int(os.getenv('PAYMENT_TIMEOUT_MINUTES', 30)),
-    'categories': os.getenv('CATEGORIES', 'STREAMING,DISCORD,GAMING,DIGITAL,ACCOUNTS,BOTS').split(','),
-    'ticket_category_id': 0,  # Will be set during setup
+    'currency_symbol': CURRENCY_SYMBOL,
+    'order_prefix': 'RO-',
+    'payment_timeout': 30,
+    'categories': ['STREAMING', 'DISCORD', 'GAMING', 'DIGITAL', 'ACCOUNTS', 'BOTS'],
+    'ticket_category_id': 0,
     'support_role_id': 0,
     'admin_role_id': 0,
     'ticket_log_channel_id': 0,
@@ -53,7 +65,7 @@ CONFIG = {
 }
 
 # ============ DATABASE SETUP ============
-DB_PATH = os.getenv('DATABASE_PATH', 'shop.db')
+DB_PATH = 'shop.db'
 
 db_dir = os.path.dirname(DB_PATH)
 if db_dir:
@@ -196,8 +208,6 @@ class ShopBot(commands.Bot):
                 print(f"❌ Failed to sync commands: {e}")
 
 bot = ShopBot()
-
-# ============ REMOVE DEFAULT HELP COMMAND ============
 bot.remove_command('help')
 
 # ============ HELPER FUNCTIONS ============
@@ -354,7 +364,6 @@ class PurchaseModal(discord.ui.Modal):
         self.add_item(self.details)
 
 async def handle_ticket_creation(interaction: discord.Interaction, modal: PurchaseModal):
-    """Handle the ticket creation after modal submission"""
     try:
         await interaction.response.defer(ephemeral=True)
         
@@ -364,7 +373,6 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
         details = modal.details.value or 'No additional details provided.'
         ticket_type = modal.ticket_type if hasattr(modal, 'ticket_type') else 'purchase'
         
-        # Find seller
         seller = None
         seller_name = seller_input
         
@@ -389,35 +397,28 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
                     if seller:
                         break
         
-        # Check if user is blacklisted
         cursor.execute('SELECT blacklisted FROM users WHERE user_id = ?', (str(interaction.user.id),))
         blacklisted = cursor.fetchone()
         if blacklisted and blacklisted[0] == 1:
             await interaction.followup.send('❌ You are blacklisted from this shop.', ephemeral=True)
             return
         
-        # Create ticket channel
         ticket_id = f"TICKET-{uuid.uuid4().hex[:8].upper()}"
         
-        # Get category from settings
         category_id = int(get_setting('ticket_category_id', 0) or 0)
         category = interaction.guild.get_channel(category_id) if category_id else None
         
-        # If no category found, try to find "TICKETS" category or use current channel's category
         if not category:
             for cat in interaction.guild.categories:
                 if cat.name.upper() == 'TICKETS':
                     category = cat
                     break
         
-        # If still no category, use the current channel's category
         if not category and interaction.channel.category:
             category = interaction.channel.category
         
-        # Create channel name
         channel_name = f"{ticket_type.lower()}-{interaction.user.display_name[:20]}".replace(' ', '-').lower()
         
-        # Create channel overwrites
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
@@ -438,7 +439,6 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             if admin_role:
                 overwrites[admin_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         
-        # Create the channel
         channel = await interaction.guild.create_text_channel(
             channel_name,
             category=category,
@@ -446,15 +446,13 @@ async def handle_ticket_creation(interaction: discord.Interaction, modal: Purcha
             topic=f"🎫 {ticket_type.capitalize()} Purchase Ticket - {ticket_id}"
         )
         
-        # Save to database
         cursor.execute('''
             INSERT INTO tickets (ticket_id, user_id, seller_id, channel_id, status, ticket_type)
             VALUES (?, ?, ?, ?, 'open', ?)
         ''', (ticket_id, str(interaction.user.id), str(seller.id) if seller else None, str(channel.id), ticket_type))
         conn.commit()
         
-        # Create order
-        order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
+        order_id = f"RO-{uuid.uuid4().hex[:8].upper()}"
         try:
             price_float = float(price.replace('$', '').replace(CONFIG['currency_symbol'], '').strip())
         except:
@@ -621,10 +619,9 @@ async def send_transcript(interaction: discord.Interaction, ticket_id: str):
     
     await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
 
-# ============ PANEL CREATION FUNCTIONS ============
+# ============ PANEL CREATION ============
 
 async def create_panel(channel, panel_type, custom_data=None):
-    """Create a ticket panel with custom settings"""
     panel_name = panel_type.capitalize()
     
     embed_title = custom_data.get('embed_title') if custom_data else get_setting(f'{panel_type}_embed_title', f'🎫 {panel_name} Purchase Center')
@@ -652,26 +649,22 @@ async def create_panel(channel, panel_type, custom_data=None):
     
     await channel.send(embed=embed, view=view)
 
-# ============ AUTO SETUP WIZARD ============
+# ============ SETUP WIZARD ============
 
 async def setup_wizard(ctx):
-    """Step-by-step setup wizard - AUTO CREATES CATEGORY"""
     user_id = ctx.author.id
     guild = ctx.guild
     
-    # Step 1: Create Tickets Category
     embed = discord.Embed(
         title="⚙️ RoStock Setup Wizard",
         description="**Step 1 of 5: Creating Ticket Category**\n\n"
-                    "I'll create a **TICKETS** category for all ticket channels.\n"
-                    "This will keep your server organized!",
+                    "I'll create a **TICKETS** category for all ticket channels.",
         color=CONFIG['colors']['primary']
     )
     embed.set_thumbnail(url=ROSTOCK_LOGO)
     embed.set_image(url=ROSTOCK_BANNER)
     await ctx.send(embed=embed)
     
-    # Create the category
     try:
         category = await guild.create_category("TICKETS")
         save_setting('ticket_category_id', str(category.id))
@@ -679,7 +672,7 @@ async def setup_wizard(ctx):
         
         embed = discord.Embed(
             title="✅ Category Created!",
-            description=f"Created category: **{category.name}**\nID: `{category.id}`",
+            description=f"Created category: **{category.name}**",
             color=CONFIG['colors']['success']
         )
         embed.set_thumbnail(url=ROSTOCK_LOGO)
@@ -688,7 +681,6 @@ async def setup_wizard(ctx):
         await ctx.send(f"❌ Failed to create category: {e}")
         return
     
-    # Step 2: Support Role
     embed = discord.Embed(
         title="⚙️ RoStock Setup Wizard",
         description="**Step 2 of 5: Support Role**\n\n"
@@ -706,11 +698,9 @@ async def setup_wizard(ctx):
     try:
         msg = await bot.wait_for('message', timeout=60.0, check=check)
         if msg.content.lower() != 'none':
-            # Try to find the role
             role_name = msg.content.replace('@', '').strip()
             role = discord.utils.get(guild.roles, name=role_name)
             if not role:
-                # Try to find by mention
                 for r in guild.roles:
                     if r.mention in msg.content:
                         role = r
@@ -725,7 +715,6 @@ async def setup_wizard(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ Timeout! Skipping support role.")
     
-    # Step 3: Admin Role
     embed = discord.Embed(
         title="⚙️ RoStock Setup Wizard",
         description="**Step 3 of 5: Admin Role**\n\n"
@@ -757,7 +746,7 @@ async def setup_wizard(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ Timeout! Skipping admin role.")
     
-    # Step 4: Deco Panel Text
+    # Deco Panel
     embed = discord.Embed(
         title="⚙️ RoStock Setup Wizard",
         description="**Step 4 of 5: Deco Panel Configuration**\n\n"
@@ -775,9 +764,8 @@ async def setup_wizard(ctx):
         
         embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 4 of 5: Deco Panel Configuration (continued)**\n\n"
-                        "Please enter the **panel description** for the Deco panel.\n"
-                        "(e.g., 'Click below to purchase custom deco services')",
+            description="**Step 4 of 5: Deco Panel Configuration**\n\n"
+                        "Please enter the **panel description** for the Deco panel.",
             color=CONFIG['colors']['primary']
         )
         embed.set_thumbnail(url=ROSTOCK_LOGO)
@@ -789,7 +777,7 @@ async def setup_wizard(ctx):
         
         embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 4 of 5: Deco Panel Configuration (continued)**\n\n"
+            description="**Step 4 of 5: Deco Panel Configuration**\n\n"
                         "Please enter the **button text** for the Deco panel.\n"
                         "(e.g., '🛒 Purchase Deco')",
             color=CONFIG['colors']['primary']
@@ -809,7 +797,7 @@ async def setup_wizard(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ Timeout! Using default Deco settings.")
     
-    # Step 5: Nitro Panel Text
+    # Nitro Panel
     embed = discord.Embed(
         title="⚙️ RoStock Setup Wizard",
         description="**Step 5 of 5: Nitro Panel Configuration**\n\n"
@@ -827,9 +815,8 @@ async def setup_wizard(ctx):
         
         embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 5 of 5: Nitro Panel Configuration (continued)**\n\n"
-                        "Please enter the **panel description** for the Nitro panel.\n"
-                        "(e.g., 'Click below to purchase Discord Nitro')",
+            description="**Step 5 of 5: Nitro Panel Configuration**\n\n"
+                        "Please enter the **panel description** for the Nitro panel.",
             color=CONFIG['colors']['primary']
         )
         embed.set_thumbnail(url=ROSTOCK_LOGO)
@@ -841,7 +828,7 @@ async def setup_wizard(ctx):
         
         embed = discord.Embed(
             title="⚙️ RoStock Setup Wizard",
-            description="**Step 5 of 5: Nitro Panel Configuration (continued)**\n\n"
+            description="**Step 5 of 5: Nitro Panel Configuration**\n\n"
                         "Please enter the **button text** for the Nitro panel.\n"
                         "(e.g., '🛒 Purchase Nitro')",
             color=CONFIG['colors']['primary']
@@ -861,7 +848,6 @@ async def setup_wizard(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ Timeout! Using default Nitro settings.")
     
-    # Final confirmation - FIXED
     support_role_id = get_setting('support_role_id', 0)
     admin_role_id = get_setting('admin_role_id', 0)
     support_text = f'<@&{support_role_id}>' if support_role_id else 'None'
@@ -891,7 +877,6 @@ async def setup_wizard(ctx):
 
 @bot.command(name='setup')
 async def setup_prefix(ctx):
-    """Start the setup wizard - AUTO CREATES CATEGORY"""
     if not ctx.author.guild_permissions.administrator:
         await ctx.send('❌ You need administrator permissions to run this command.')
         return
@@ -899,29 +884,24 @@ async def setup_prefix(ctx):
 
 @bot.command(name='decopanel')
 async def decopanel_prefix(ctx, channel: discord.TextChannel = None):
-    """Create a Deco purchase panel"""
     if not ctx.author.guild_permissions.administrator:
         await ctx.send('❌ You need administrator permissions to run this command.')
         return
-    
     channel = channel or ctx.channel
     await create_panel(channel, 'deco')
     await ctx.send(f'✅ Deco panel created in {channel.mention}')
 
 @bot.command(name='nitropanel')
 async def nitropanel_prefix(ctx, channel: discord.TextChannel = None):
-    """Create a Nitro purchase panel"""
     if not ctx.author.guild_permissions.administrator:
         await ctx.send('❌ You need administrator permissions to run this command.')
         return
-    
     channel = channel or ctx.channel
     await create_panel(channel, 'nitro')
     await ctx.send(f'✅ Nitro panel created in {channel.mention}')
 
 @bot.command(name='help')
 async def help_prefix(ctx):
-    """Show all commands with beautiful embed"""
     embed = discord.Embed(
         title="📚 RoStock Commands",
         description="Welcome to **RoStock**! Here are all available commands.",
@@ -965,12 +945,10 @@ async def help_prefix(ctx):
 
 @bot.command(name='say')
 async def say_prefix(ctx, *, message):
-    """Make the bot say something"""
     await ctx.send(message)
 
 @bot.command(name='shop')
 async def shop_prefix(ctx):
-    """Browse the shop"""
     embed = discord.Embed(
         title="🛍️ RoStock Shop",
         description="Select a category below.",
@@ -991,7 +969,6 @@ async def shop_prefix(ctx):
 
 @bot.command(name='balance', aliases=['bal'])
 async def balance_prefix(ctx):
-    """Check your balance"""
     ensure_user(ctx.author.id)
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (ctx.author.id,))
     user = cursor.fetchone()
@@ -1010,7 +987,6 @@ async def balance_prefix(ctx):
 
 @bot.command(name='buy')
 async def buy_prefix(ctx, *, product_name):
-    """Purchase a product"""
     cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{product_name}%',))
     product_data = cursor.fetchone()
     if not product_data:
@@ -1019,8 +995,8 @@ async def buy_prefix(ctx, *, product_name):
     if product_data[4] < 1:
         await ctx.send('❌ Out of stock.')
         return
-    order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
-    expires = (datetime.now() + timedelta(minutes=CONFIG['payment_timeout'])).isoformat()
+    order_id = f"RO-{uuid.uuid4().hex[:8].upper()}"
+    expires = (datetime.now() + timedelta(minutes=30)).isoformat()
     cursor.execute('''
         INSERT INTO orders (id, user_id, product_id, product_name, seller_id, seller_name, price, quantity, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -1040,7 +1016,6 @@ async def buy_prefix(ctx, *, product_name):
 
 @bot.command(name='stock')
 async def stock_prefix(ctx):
-    """Show current stock"""
     cursor.execute('SELECT name, stock, price, category FROM products WHERE active = 1 ORDER BY category, name')
     products = cursor.fetchall()
     if not products:
@@ -1066,7 +1041,6 @@ async def stock_prefix(ctx):
 
 @bot.command(name='orders')
 async def orders_prefix(ctx):
-    """View your orders"""
     cursor.execute(
         'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 15',
         (ctx.author.id,)
@@ -1091,7 +1065,6 @@ async def orders_prefix(ctx):
 
 @bot.command(name='product')
 async def product_prefix(ctx, *, product_name):
-    """View product details"""
     cursor.execute('SELECT * FROM products WHERE name LIKE ? AND active = 1', (f'%{product_name}%',))
     product_data = cursor.fetchone()
     if not product_data:
@@ -1113,7 +1086,6 @@ async def product_prefix(ctx, *, product_name):
 
 @bot.command(name='ticket')
 async def ticket_prefix(ctx):
-    """Create a purchase ticket"""
     embed = discord.Embed(
         title="🎫 RoStock Purchase Ticket",
         description="Click the button below to create a purchase ticket.\n"
@@ -1129,7 +1101,6 @@ async def ticket_prefix(ctx):
 
 @bot.command(name='support')
 async def support_prefix(ctx):
-    """Open a support ticket"""
     embed = discord.Embed(
         title="🎫 RoStock Support",
         description="Click the button below to create a support ticket.",
@@ -1144,7 +1115,6 @@ async def support_prefix(ctx):
 
 @bot.command(name='cancel')
 async def cancel_prefix(ctx, order_id: str):
-    """Cancel an order"""
     order_id = order_id.upper()
     cursor.execute('SELECT * FROM orders WHERE id = ? AND user_id = ?', (order_id, ctx.author.id))
     order_data = cursor.fetchone()
@@ -1158,22 +1128,18 @@ async def cancel_prefix(ctx, order_id: str):
     conn.commit()
     await ctx.send(f'✅ Order `{order_id}` cancelled.')
 
-# ============ ON_MESSAGE HANDLER ============
+# ============ EVENT HANDLERS ============
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-    
     if message.content.startswith(','):
         try:
             await message.delete()
         except:
             pass
-    
     await bot.process_commands(message)
-
-# ============ ON_INTERACTION HANDLER ============
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
@@ -1311,8 +1277,8 @@ async def on_interaction(interaction: discord.Interaction):
                 await interaction.response.send_message('❌ Out of stock.', ephemeral=True)
                 return
             
-            order_id = f"{CONFIG['order_prefix']}{uuid.uuid4().hex[:8].upper()}"
-            expires = (datetime.now() + timedelta(minutes=CONFIG['payment_timeout'])).isoformat()
+            order_id = f"RO-{uuid.uuid4().hex[:8].upper()}"
+            expires = (datetime.now() + timedelta(minutes=30)).isoformat()
             
             cursor.execute('''
                 INSERT INTO orders (id, user_id, product_id, product_name, seller_id, seller_name, price, quantity, expires_at)
@@ -1396,17 +1362,10 @@ async def on_submit(interaction: discord.Interaction):
 
 # ============ RUN BOT ============
 if __name__ == '__main__':
-    if not TOKEN:
-        print("❌ Error: BOT_TOKEN environment variable is not set!")
-        print("Please set BOT_TOKEN in your .env file or Railway environment variables.")
-        exit(1)
-    
     print("🚀 Starting RoStock Discord Bot...")
     print(f"📊 Database: {DB_PATH}")
     print("📝 Prefix: , (comma)")
     print("🔗 Slash commands: / (also available)")
-    print(f"🖼️ Logo: {ROSTOCK_LOGO}")
-    print(f"🖼️ Banner: {ROSTOCK_BANNER}")
     try:
         bot.run(TOKEN)
     except Exception as e:
