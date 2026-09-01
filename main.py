@@ -65,37 +65,35 @@ CONFIG = {
 }
 
 # ============ DATABASE SETUP ============
-# Use /app/shop.db for Railway, or local shop.db for development
-DB_PATH = os.getenv('DATABASE_PATH', '/app/shop.db')
+# Try different paths that work on Railway
+DB_PATH = None
+possible_paths = [
+    '/data/shop.db',           # Railway volume path (if you have one)
+    os.path.join(os.getcwd(), 'shop.db'),  # Current working directory
+    'shop.db',                  # Fallback
+]
 
-# Ensure the directory exists
-db_dir = os.path.dirname(DB_PATH)
-if db_dir and not os.path.exists(db_dir):
+for path in possible_paths:
     try:
-        os.makedirs(db_dir, exist_ok=True)
-        print(f"✅ Created directory: {db_dir}")
-    except Exception as e:
-        print(f"❌ Could not create directory: {e}")
-
-# Connect to database
-try:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    cursor = conn.cursor()
-    print(f"✅ Database connected: {DB_PATH}")
-except sqlite3.OperationalError as e:
-    print(f"❌ Database error: {e}")
-    print(f"📁 Trying to create database at: {DB_PATH}")
-    # Try with a different path as fallback
-    try:
-        DB_PATH = 'shop.db'
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+        # Ensure directory exists
+        db_dir = os.path.dirname(path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+        
+        # Try to connect
+        conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
         cursor = conn.cursor()
-        print(f"✅ Database connected (fallback): {DB_PATH}")
-    except Exception as e2:
-        print(f"❌ Failed to connect to database: {e2}")
-        raise
+        DB_PATH = path
+        print(f"✅ Database connected: {DB_PATH}")
+        break
+    except Exception as e:
+        print(f"❌ Could not connect to {path}: {e}")
+        continue
+
+if DB_PATH is None:
+    print("❌ Failed to connect to any database path!")
+    exit(1)
 
 cursor.executescript('''
     CREATE TABLE IF NOT EXISTS products (
