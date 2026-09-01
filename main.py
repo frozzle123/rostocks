@@ -861,14 +861,19 @@ async def setup_wizard(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ Timeout! Using default Nitro settings.")
     
-    # Final confirmation
+    # Final confirmation - FIXED
+    support_role_id = get_setting('support_role_id', 0)
+    admin_role_id = get_setting('admin_role_id', 0)
+    support_text = f'<@&{support_role_id}>' if support_role_id else 'None'
+    admin_text = f'<@&{admin_role_id}>' if admin_role_id else 'None'
+    
     final_embed = discord.Embed(
         title="✅ Setup Complete!",
         description="Your RoStock bot has been configured successfully!\n\n"
                     "**What was set up:**\n"
                     f"• ✅ Created **TICKETS** category\n"
-                    f"• ✅ Support role: {f'<@&{get_setting("support_role_id", 0)}>' if get_setting("support_role_id", 0) else 'None'}\n"
-                    f"• ✅ Admin role: {f'<@&{get_setting("admin_role_id", 0)}>' if get_setting("admin_role_id", 0) else 'None'}\n"
+                    f"• ✅ Support role: {support_text}\n"
+                    f"• ✅ Admin role: {admin_text}\n"
                     f"• ✅ Deco panel configured\n"
                     f"• ✅ Nitro panel configured\n\n"
                     "**Use these commands to create panels:**\n"
